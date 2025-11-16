@@ -26,6 +26,60 @@ func tryFlush(w http.ResponseWriter) {
 	}
 }
 
+func handlePing(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	respEncoder := json.NewEncoder(w)
+	destination := r.URL.Query().Get("destination")
+	pingCfg := &pkgsimpleping.PingConfiguration{
+		Destination: destination,
+		Count:       3,
+		Timeout:     30 * time.Second,
+		Interval:    1 * time.Second,
+	}
+	if count := r.URL.Query().Get("count"); count != "" {
+		countInt, err := strconv.Atoi(count)
+		if err != nil {
+			respEncoder.Encode(pkgutils.ErrorResponse{Error: err.Error()})
+			return
+		}
+		pingCfg.Count = countInt
+	}
+	if timeout := r.URL.Query().Get("timeout"); timeout != "" {
+		timeoutInt, err := strconv.Atoi(timeout)
+		if err != nil {
+			respEncoder.Encode(pkgutils.ErrorResponse{Error: err.Error()})
+			return
+		}
+		pingCfg.Timeout = time.Duration(timeoutInt) * time.Second
+	}
+	if interval := r.URL.Query().Get("interval"); interval != "" {
+		intervalInt, err := strconv.Atoi(interval)
+		if err != nil {
+			respEncoder.Encode(pkgutils.ErrorResponse{Error: err.Error()})
+			return
+		}
+		pingCfg.Interval = time.Duration(intervalInt) * time.Second
+	}
+
+	pinger := pkgsimpleping.NewSimplePinger(pingCfg)
+
+	pingEvents := pinger.Ping(context.TODO())
+	for ev := range pingEvents {
+		err := respEncoder.Encode(ev)
+		if err != nil {
+			respEncoder.Encode(pkgutils.ErrorResponse{Error: err.Error()})
+			tryFlush(w)
+			break
+		}
+		tryFlush(w)
+	}
+}
+
+func handleTraceroute(w http.ResponseWriter, r *http.Request) {
+	errObj := pkgutils.ErrorResponse{Error: "not implemented"}
+	json.NewEncoder(w).Encode(errObj)
+}
+
 func main() {
 	socketPath := "/var/run/myserver.sock"
 
@@ -38,54 +92,8 @@ func main() {
 
 	go func() {
 		muxer := http.NewServeMux()
-		muxer.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			respEncoder := json.NewEncoder(w)
-			destination := r.URL.Query().Get("destination")
-			pingCfg := &pkgsimpleping.PingConfiguration{
-				Destination: destination,
-				Count:       3,
-				Timeout:     30 * time.Second,
-				Interval:    1 * time.Second,
-			}
-			if count := r.URL.Query().Get("count"); count != "" {
-				countInt, err := strconv.Atoi(count)
-				if err != nil {
-					respEncoder.Encode(pkgutils.ErrorResponse{Error: err.Error()})
-					return
-				}
-				pingCfg.Count = countInt
-			}
-			if timeout := r.URL.Query().Get("timeout"); timeout != "" {
-				timeoutInt, err := strconv.Atoi(timeout)
-				if err != nil {
-					respEncoder.Encode(pkgutils.ErrorResponse{Error: err.Error()})
-					return
-				}
-				pingCfg.Timeout = time.Duration(timeoutInt) * time.Second
-			}
-			if interval := r.URL.Query().Get("interval"); interval != "" {
-				intervalInt, err := strconv.Atoi(interval)
-				if err != nil {
-					respEncoder.Encode(pkgutils.ErrorResponse{Error: err.Error()})
-					return
-				}
-				pingCfg.Interval = time.Duration(intervalInt) * time.Second
-			}
-
-			pinger := pkgsimpleping.NewSimplePinger(pingCfg)
-
-			pingEvents := pinger.Ping(context.TODO())
-			for ev := range pingEvents {
-				err := respEncoder.Encode(ev)
-				if err != nil {
-					respEncoder.Encode(pkgutils.ErrorResponse{Error: err.Error()})
-					tryFlush(w)
-					break
-				}
-				tryFlush(w)
-			}
-		})
+		muxer.HandleFunc("/ping", handlePing)
+		muxer.HandleFunc("/traceroute", handleTraceroute)
 
 		server := http.Server{
 			Handler: muxer,
