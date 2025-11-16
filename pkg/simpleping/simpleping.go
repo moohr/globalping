@@ -225,7 +225,7 @@ func extractAbsPathFromUNIXURL(u *url.URL) (string, error) {
 
 type RemotePingerSpec struct {
 	// BaseURL of the API endpoint of the remote pinger, valid examples:
-	// - unix://var/run/simple-pinger.sock
+	// - unix:///var/run/simple-pinger.sock
 	// - http://localhost:8080/ping
 	// - https://[::1]:8080/ping
 	// - https://example.com/api/v1

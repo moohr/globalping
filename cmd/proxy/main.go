@@ -23,7 +23,7 @@ var path = flag.String("path", "/ws", "websocket path")
 var nodeName = flag.String("node-name", "agent-1", "node name")
 var logEchoReplies = flag.Bool("log-echo-replies", false, "log echo replies")
 var rabbitMQBrokerURL = flag.String("rabbitmq-broker-url", "amqp://localhost:5672/", "RabbitMQ broker URL")
-var remotePingerEndpoint = flag.String("remote-pinger-endpoint", "unix://var/run/simple-pinger.sock", "Remote pinger endpoint")
+var remotePingerEndpoint = flag.String("remote-pinger-endpoint", "unix:///var/run/simple-pinger.sock", "Remote pinger endpoint")
 var remotePingerPath = flag.String("remote-pinger-http-path", "/ping", "Remote pinger HTTP path")
 
 func handleTask(ctx context.Context, taskMsg *amqp.Delivery, updatesCh chan<- pkgrbmqping.TaskUpdate) {

@@ -78,7 +78,6 @@ func getRoutingKey(connRegistry *pkgconnreg.ConnRegistry, from string) *string {
 }
 
 func RespondError(w http.ResponseWriter, err error, status int) {
-
 	respbytes, err := json.Marshal(pkgutils.ErrorResponse{Error: err.Error()})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -165,20 +164,16 @@ func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Start multiple pings in parallel
-	eventCh := pkgpinger.StartMultiplePings(ctx, pingers)
-
-	// Stream events as line-delimited JSON
+	// Start multiple pings in parallel, and stream events as line-delimited JSON
 	encoder := json.NewEncoder(w)
-	for ev := range eventCh {
+	for ev := range pkgpinger.StartMultiplePings(ctx, pingers) {
 		if err := encoder.Encode(ev); err != nil {
 			log.Printf("Failed to encode event: %v", err)
-			RespondError(w, fmt.Errorf("failed to encode event: %w", err), http.StatusInternalServerError)
+			encoder.Encode(pkgutils.ErrorResponse{Error: fmt.Errorf("failed to encode event: %w", err).Error()})
+			pkgutils.TryFlush(w)
 			return
 		}
-		// Flush the response to send immediately
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
-		}
+
+		pkgutils.TryFlush(w)
 	}
 }

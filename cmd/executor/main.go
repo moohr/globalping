@@ -17,15 +17,6 @@ import (
 	pkgutils "example.com/rbmq-demo/pkg/utils"
 )
 
-func tryFlush(w http.ResponseWriter) {
-	// The default HTTP/1.x and HTTP/2 ResponseWriter implementations support Flusher,
-	// but ResponseWriter wrappers may not.
-	// Handlers should always test for this ability at runtime.
-	if flusher, ok := w.(http.Flusher); ok {
-		flusher.Flush()
-	}
-}
-
 func handlePing(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	respEncoder := json.NewEncoder(w)
@@ -68,10 +59,10 @@ func handlePing(w http.ResponseWriter, r *http.Request) {
 		err := respEncoder.Encode(ev)
 		if err != nil {
 			respEncoder.Encode(pkgutils.ErrorResponse{Error: err.Error()})
-			tryFlush(w)
+			pkgutils.TryFlush(w)
 			break
 		}
-		tryFlush(w)
+		pkgutils.TryFlush(w)
 	}
 }
 
