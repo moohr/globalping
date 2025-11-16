@@ -196,6 +196,8 @@ func startPinging(cfg *PingConfiguration) <-chan pkgpinger.PingEvent {
 }
 
 type SimpleRemotePinger struct {
+	// A string use to identify the remote pinger itself (i.e. to identify which remote pinger that the packet is actually come from)
+	from string
 	fullURL *url.URL
 }
 
@@ -208,7 +210,27 @@ func encodeURLQueryForSimpleRemotePinger(cfg *PingConfiguration) url.Values {
 	return query
 }
 
-func NewSimpleRemotePinger(remoteEndpoint string, cfg *PingConfiguration) (*SimpleRemotePinger, error) {
+type RemotePingerSpec struct {
+	// BaseURL of the API endpoint of the remote pinger, valid examples:
+	// - unix://var/run/simple-pinger.sock
+	// - http://localhost:8080/ping
+	// - https://[::1]:8080/ping
+	// - https://example.com/api/v1
+	BaseURL string
+
+	// HTTP request path of the API endpoint of the remote pinger, valid examples:
+	// - /ping
+	// - /some/path/to/ping
+	// Note: no scheme, host or port are allowed here, only the path should be specified.
+	HTTPPath string
+}
+
+// `remoteEndpoint`` specifies how to reach the api endpoint of the remote pinger
+// `cfg` specifies ping what
+// `from` specifies the name of the remote pinger itself so that the caller can identify which remote pinger that the packet/event is actually come from
+func NewSimpleRemotePinger(spec RemotePingerSpec, cfg *PingConfiguration, from string) (*SimpleRemotePinger, error) {
+
+	var remoteEndpoint string
 	parsedURL, err := url.Parse(remoteEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse remote endpoint: %w", err)
@@ -218,6 +240,7 @@ func NewSimpleRemotePinger(remoteEndpoint string, cfg *PingConfiguration) (*Simp
 	parsedURL.RawQuery = urlQuery.Encode()
 	return &SimpleRemotePinger{
 		fullURL: parsedURL,
+		from: from,
 	}, nil
 }
 
@@ -263,6 +286,10 @@ func (srPinger *SimpleRemotePinger) Ping(ctx context.Context) <-chan pkgpinger.P
 				}
 				continue
 			}
+			if ev.Metadata == nil {
+				ev.Metadata = make(map[string]string)
+			}
+			ev.Metadata[pkgpinger.MetadataKeyFrom] = srPinger.from
 			evChan <- ev
 		}
 		if err := scanner.Err(); err != nil {

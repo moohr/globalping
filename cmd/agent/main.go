@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -11,7 +13,9 @@ import (
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
 	pkgnodereg "example.com/rbmq-demo/pkg/nodereg"
-	pkgrabbitmqping "example.com/rbmq-demo/pkg/rabbitmqping"
+	pkgrbmqping "example.com/rbmq-demo/pkg/rabbitmqping"
+	pkgsimpleping "example.com/rbmq-demo/pkg/simpleping"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 var addr = flag.String("addr", "localhost:8080", "http service address")
@@ -19,18 +23,76 @@ var path = flag.String("path", "/ws", "websocket path")
 var nodeName = flag.String("node-name", "agent-1", "node name")
 var logEchoReplies = flag.Bool("log-echo-replies", false, "log echo replies")
 var rabbitMQBrokerURL = flag.String("rabbitmq-broker-url", "amqp://localhost:5672/", "RabbitMQ broker URL")
+var remotePingerEndpoint = flag.String("remote-pinger-endpoint", "unix://var/run/simple-pinger.sock", "Remote pinger endpoint")
+var remotePingerPath = flag.String("remote-pinger-http-path", "/ping", "Remote pinger HTTP path")
 
-// todo: 实现一个 RemoteSimplePinger，它代表一个（可能是部署在远端的）executor，一个 RemoteSimplePinger 封装针对远程 executor 的调用。
+func handleTask(ctx context.Context, taskMsg *amqp.Delivery, updatesCh chan<- pkgrbmqping.TaskUpdate) {
+
+	var pingCfg pkgsimpleping.PingConfiguration
+	err := json.Unmarshal(taskMsg.Body, &pingCfg)
+	if err != nil {
+		updatesCh <- pkgrbmqping.TaskUpdate{
+			Err:     fmt.Errorf("failed to unmarshal the message: %w, message_id %s, correlation_id, %s", err, taskMsg.MessageId, taskMsg.CorrelationId),
+			TaskMsg: taskMsg,
+		}
+		return
+	}
+
+	remotePingerSpec := pkgsimpleping.RemotePingerSpec{
+		BaseURL:  *remotePingerEndpoint,
+		HTTPPath: *remotePingerPath,
+	}
+
+	log.Printf("Message %s corr_id %s is a PingConfiguration, destination %s", taskMsg.MessageId, taskMsg.CorrelationId, pingCfg.Destination)
+	pinger, err := pkgsimpleping.NewSimpleRemotePinger(remotePingerSpec, &pingCfg, *nodeName)
+	if err != nil {
+		updatesCh <- pkgrbmqping.TaskUpdate{
+			Err:     fmt.Errorf("failed to create remote pinger: %w", err),
+			TaskMsg: taskMsg,
+		}
+		return
+	}
+
+	log.Println("Starting to ping destination:", pingCfg.Destination, "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId)
+	pingEvents := pinger.Ping(ctx)
+
+	log.Println("Retrieving ping events about destination:", pingCfg.Destination)
+	for ev := range pingEvents {
+		evJson, err := json.Marshal(ev)
+		if err != nil {
+			log.Println("Failed to marshal ping event:", ev, "error:", err, "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId)
+			continue
+		}
+		log.Println("Ping reply:", "type", ev.Type, "metadata", ev.Metadata, "error", ev.Error, "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId)
+		updatesCh <- pkgrbmqping.TaskUpdate{
+			Envelope: &amqp.Publishing{
+				ContentType:   "application/json",
+				CorrelationId: taskMsg.CorrelationId,
+				Body:          evJson,
+			},
+			TaskMsg: taskMsg,
+		}
+	}
+	log.Println("Ping finished, sending final task update", "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId)
+	updatesCh <- pkgrbmqping.TaskUpdate{
+		TaskMsg: taskMsg,
+	}
+
+}
+
 func main() {
 	flag.Parse()
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
-	rbmqResponder := pkgrabbitmqping.RabbitMQResponder{
+	rbmqResponder := pkgrbmqping.RabbitMQResponder{
 		URL: *rabbitMQBrokerURL,
 	}
+	rbmqResponder.SetTaskHandler(handleTask)
 	log.Println("Initializing RabbitMQ responder...")
-	rbmqResponder.Init()
+	if err := rbmqResponder.Init(); err != nil {
+		log.Fatalf("Failed to initialize RabbitMQ responder: %v", err)
+	}
 
 	log.Println("Starting RabbitMQ responder...")
 	rabbitMQErrCh := rbmqResponder.ServeRPC(context.Background())

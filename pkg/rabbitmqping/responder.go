@@ -2,12 +2,10 @@ package rabbitmqping
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
 
-	pkgsimpleping "example.com/rbmq-demo/pkg/simpleping"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -19,12 +17,16 @@ type RabbitMQResponder struct {
 	initalized     bool
 	queueNameIsSet bool
 	queueName      chan string
+	taskHandler    func(ctx context.Context, taskMsg *amqp.Delivery, updatesWriter chan<- TaskUpdate)
 }
 
 func (rbmqResponder *RabbitMQResponder) Init() error {
 	rbmqResponder.closeCh = make(chan interface{})
 	rbmqResponder.queueName = make(chan string, 1)
 	rbmqResponder.initalized = true
+	if rbmqResponder.taskHandler == nil {
+		return fmt.Errorf("task handler is not set")
+	}
 	return nil
 }
 
@@ -34,6 +36,10 @@ type TaskUpdate struct {
 	Envelope *amqp.Publishing
 }
 
+func (rbmqResponder *RabbitMQResponder) SetTaskHandler(taskHandler func(ctx context.Context, taskMsg *amqp.Delivery, updatesWriter chan<- TaskUpdate)) {
+	rbmqResponder.taskHandler = taskHandler
+}
+
 func (rbmqResponder *RabbitMQResponder) handleTask(ctx context.Context, taskMsg *amqp.Delivery) <-chan TaskUpdate {
 	log.Println("Received a message", "exchg", taskMsg.Exchange, "routing_key", taskMsg.RoutingKey, "correlation_id", taskMsg.CorrelationId, "message_id", taskMsg.MessageId, "reply_to", taskMsg.ReplyTo)
 
@@ -41,44 +47,10 @@ func (rbmqResponder *RabbitMQResponder) handleTask(ctx context.Context, taskMsg 
 
 	go func(taskMsg *amqp.Delivery) {
 		defer close(updatesCh)
-
-		var pingCfg pkgsimpleping.PingConfiguration
-		err := json.Unmarshal(taskMsg.Body, &pingCfg)
-		if err != nil {
-			updatesCh <- TaskUpdate{
-				Err:     fmt.Errorf("failed to unmarshal the message: %w, message_id %s, correlation_id, %s", err, taskMsg.MessageId, taskMsg.CorrelationId),
-				TaskMsg: taskMsg,
-			}
-			return
+		if rbmqResponder.taskHandler != nil {
+			rbmqResponder.taskHandler(ctx, taskMsg, updatesCh)
 		}
 
-		log.Printf("Message %s corr_id %s is a PingConfiguration, destination %s", taskMsg.MessageId, taskMsg.CorrelationId, pingCfg.Destination)
-		pinger := pkgsimpleping.NewSimplePinger(&pingCfg)
-
-		log.Println("Starting to ping destination:", pingCfg.Destination, "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId)
-		pingEvents := pinger.Ping(ctx)
-
-		log.Println("Retrieving ping events about destination:", pingCfg.Destination)
-		for ev := range pingEvents {
-			evJson, err := json.Marshal(ev)
-			if err != nil {
-				log.Println("Failed to marshal ping event:", ev, "error:", err, "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId)
-				continue
-			}
-			log.Println("Ping reply:", "type", ev.Type, "metadata", ev.Metadata, "error", ev.Error, "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId)
-			updatesCh <- TaskUpdate{
-				Envelope: &amqp.Publishing{
-					ContentType:   "application/json",
-					CorrelationId: taskMsg.CorrelationId,
-					Body:          evJson,
-				},
-				TaskMsg: taskMsg,
-			}
-		}
-		log.Println("Ping finished, sending final task update", "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId)
-		updatesCh <- TaskUpdate{
-			TaskMsg: taskMsg,
-		}
 	}(taskMsg)
 
 	return updatesCh
