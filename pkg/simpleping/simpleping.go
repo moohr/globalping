@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"path"
 	"strconv"
 	"time"
 
@@ -213,6 +212,17 @@ func encodeURLQueryForSimpleRemotePinger(cfg *PingConfiguration) url.Values {
 	return query
 }
 
+func extractAbsPathFromUNIXURL(u *url.URL) (string, error) {
+	if u.Scheme != "unix" {
+		return "", fmt.Errorf("scheme of the provided URL is not unix: %q", u.Scheme)
+	}
+	if u.Host != "" {
+		return "", fmt.Errorf("provided URL is invalid, it has a non-empty host field which is un-expected, valid unix URL: unix://<abs_path_to_sock_file e.g. unix:///path/to/somewhere/myprog.sock")
+	}
+	// Only allow a single form of unix socket to guarantee consistency
+	return u.Path, nil
+}
+
 type RemotePingerSpec struct {
 	// BaseURL of the API endpoint of the remote pinger, valid examples:
 	// - unix://var/run/simple-pinger.sock
@@ -237,74 +247,44 @@ func NewSimpleRemotePinger(spec RemotePingerSpec, cfg *PingConfiguration, from s
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse remote endpoint: %w", err)
 	}
-
-	// Compose request path by joining any existing base path with HTTPPath
-	requestPath := spec.HTTPPath
-	if baseURL.Path != "" {
-		requestPath = path.Join(baseURL.Path, spec.HTTPPath)
-		// Ensure leading slash
-		if requestPath == "." || requestPath == "" || requestPath[0] != '/' {
-			requestPath = "/" + requestPath
+	if baseURL.Scheme == "http" || baseURL.Scheme == "https" {
+		baseURL.RawQuery = encodeURLQueryForSimpleRemotePinger(cfg).Encode()
+		baseURL.Path, err = url.JoinPath(baseURL.Path, spec.HTTPPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to join path: %w, base URL: %q, path: %q", err, spec.BaseURL, spec.HTTPPath)
 		}
+		log.Printf("Will use API endpoint: %s", baseURL.String())
+		return &SimpleRemotePinger{
+			from:       from,
+			httpClient: http.DefaultClient,
+			fullURL:    baseURL,
+		}, nil
 	}
-
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-
-	var full *url.URL
-
-	switch baseURL.Scheme {
-	case "unix":
-		// Support unix domain socket via custom transport.
-		// Normalize socket path from host+path (handles unix://var/run.sock and unix:///var/run.sock)
-		socketPath := baseURL.Host + baseURL.Path
+	if baseURL.Scheme == "unix" {
+		customTransport := &http.Transport{}
 		dialer := &net.Dialer{}
-		httpClient.Transport = &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return dialer.DialContext(ctx, "unix", socketPath)
+		unixSockPath, err := extractAbsPathFromUNIXURL(baseURL)
+		if err != nil {
+			return nil, fmt.Errorf("failed to extract absolute path from UNIX URL: %w, base URL: %q", err, spec.BaseURL)
+		}
+		log.Printf("Will use UNIX socket: %s", unixSockPath)
+		customTransport.DialContext = func(ctx context.Context, nw, add string) (net.Conn, error) {
+			return dialer.DialContext(ctx, "unix", unixSockPath)
+		}
+		httpClient := &http.Client{
+			Transport: customTransport,
+		}
+		return &SimpleRemotePinger{
+			httpClient: httpClient,
+			fullURL: &url.URL{
+				Scheme: "http",
+				Host:   "localhost",
+				Path:   spec.HTTPPath,
 			},
-		}
-		// Use a dummy HTTP URL; host is ignored by custom transport
-		full = &url.URL{
-			Scheme: "http",
-			Host:   "localhost",
-			Path:   requestPath,
-		}
-	case "http", "https":
-		// Use standard HTTP(S)
-		full = &url.URL{
-			Scheme: baseURL.Scheme,
-			User:   baseURL.User,
-			Host:   baseURL.Host,
-			Path:   requestPath,
-		}
-		// Preserve any base query parameters
-		full.RawQuery = baseURL.RawQuery
-	default:
-		return nil, fmt.Errorf("unsupported scheme for remote endpoint: %q", baseURL.Scheme)
+			from: from,
+		}, nil
 	}
-
-	// Attach ping configuration as query string
-	urlQuery := encodeURLQueryForSimpleRemotePinger(cfg)
-	// Merge with any existing query parameters
-	if full.RawQuery != "" {
-		baseVals, _ := url.ParseQuery(full.RawQuery)
-		for k, vals := range urlQuery {
-			for _, v := range vals {
-				baseVals.Add(k, v)
-			}
-		}
-		full.RawQuery = baseVals.Encode()
-	} else {
-		full.RawQuery = urlQuery.Encode()
-	}
-
-	return &SimpleRemotePinger{
-		fullURL:    full,
-		from:       from,
-		httpClient: httpClient,
-	}, nil
+	return nil, fmt.Errorf("unsupported scheme for remote endpoint: %q, base URL: %q", baseURL.Scheme, spec.BaseURL)
 }
 
 func (srPinger *SimpleRemotePinger) Ping(ctx context.Context) <-chan pkgpinger.PingEvent {
