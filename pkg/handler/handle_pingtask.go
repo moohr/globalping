@@ -13,6 +13,7 @@ import (
 	pkgnodereg "example.com/rbmq-demo/pkg/nodereg"
 	pkgpinger "example.com/rbmq-demo/pkg/pinger"
 	pkgrabbitmqping "example.com/rbmq-demo/pkg/rabbitmqping"
+	pkgrbmqrpc "example.com/rbmq-demo/pkg/rpc"
 	pkgsimpleping "example.com/rbmq-demo/pkg/simpleping"
 	pkgutils "example.com/rbmq-demo/pkg/utils"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -142,11 +143,15 @@ func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 					continue
 				}
 
+				rbmqRemoteCaller := pkgrbmqrpc.RabbitMQRemoteCaller{
+					RoutingKey: *routingKey,
+				}
+
 				log.Printf("Sending ping to %s via RabbitMQ routing key %s", target, *routingKey)
 
 				rabbitmqPinger := pkgrabbitmqping.RabbitMQPinger{
-					From:       from,
-					RoutingKey: *routingKey,
+					From:             from,
+					RBMQRemoteCaller: &rbmqRemoteCaller,
 					PingCfg: pkgsimpleping.PingConfiguration{
 						Destination: target,
 						Count:       count,

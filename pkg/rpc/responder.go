@@ -1,4 +1,4 @@
-package rabbitmqping
+package rpc
 
 import (
 	"context"

@@ -13,7 +13,7 @@ import (
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
 	pkgnodereg "example.com/rbmq-demo/pkg/nodereg"
-	pkgrbmqping "example.com/rbmq-demo/pkg/rabbitmqping"
+	pkgrbmqrpc "example.com/rbmq-demo/pkg/rpc"
 	pkgsimpleping "example.com/rbmq-demo/pkg/simpleping"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -26,12 +26,12 @@ var rabbitMQBrokerURL = flag.String("rabbitmq-broker-url", "amqp://localhost:567
 var remotePingerEndpoint = flag.String("remote-pinger-endpoint", "unix:///var/run/simple-pinger.sock", "Remote pinger endpoint")
 var remotePingerPath = flag.String("remote-pinger-http-path", "/ping", "Remote pinger HTTP path")
 
-func handleTask(ctx context.Context, taskMsg *amqp.Delivery, updatesCh chan<- pkgrbmqping.TaskUpdate) {
+func handleTask(ctx context.Context, taskMsg *amqp.Delivery, updatesCh chan<- pkgrbmqrpc.TaskUpdate) {
 
 	var pingCfg pkgsimpleping.PingConfiguration
 	err := json.Unmarshal(taskMsg.Body, &pingCfg)
 	if err != nil {
-		updatesCh <- pkgrbmqping.TaskUpdate{
+		updatesCh <- pkgrbmqrpc.TaskUpdate{
 			Err:     fmt.Errorf("failed to unmarshal the message: %w, message_id %s, correlation_id, %s", err, taskMsg.MessageId, taskMsg.CorrelationId),
 			TaskMsg: taskMsg,
 		}
@@ -46,7 +46,7 @@ func handleTask(ctx context.Context, taskMsg *amqp.Delivery, updatesCh chan<- pk
 	log.Printf("Message %s corr_id %s is a PingConfiguration, destination %s", taskMsg.MessageId, taskMsg.CorrelationId, pingCfg.Destination)
 	pinger, err := pkgsimpleping.NewSimpleRemotePinger(remotePingerSpec, &pingCfg, *nodeName)
 	if err != nil {
-		updatesCh <- pkgrbmqping.TaskUpdate{
+		updatesCh <- pkgrbmqrpc.TaskUpdate{
 			Err:     fmt.Errorf("failed to create remote pinger: %w", err),
 			TaskMsg: taskMsg,
 		}
@@ -64,7 +64,7 @@ func handleTask(ctx context.Context, taskMsg *amqp.Delivery, updatesCh chan<- pk
 			continue
 		}
 		log.Println("Ping reply:", "type", ev.Type, "metadata", ev.Metadata, "error", ev.Error, "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId)
-		updatesCh <- pkgrbmqping.TaskUpdate{
+		updatesCh <- pkgrbmqrpc.TaskUpdate{
 			Envelope: &amqp.Publishing{
 				ContentType:   "application/json",
 				CorrelationId: taskMsg.CorrelationId,
@@ -74,7 +74,7 @@ func handleTask(ctx context.Context, taskMsg *amqp.Delivery, updatesCh chan<- pk
 		}
 	}
 	log.Println("Ping finished, sending final task update", "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId)
-	updatesCh <- pkgrbmqping.TaskUpdate{
+	updatesCh <- pkgrbmqrpc.TaskUpdate{
 		TaskMsg: taskMsg,
 	}
 
@@ -85,7 +85,7 @@ func main() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
-	rbmqResponder := pkgrbmqping.RabbitMQResponder{
+	rbmqResponder := pkgrbmqrpc.RabbitMQResponder{
 		URL: *rabbitMQBrokerURL,
 	}
 	rbmqResponder.SetTaskHandler(handleTask)
