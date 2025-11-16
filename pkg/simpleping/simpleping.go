@@ -2,7 +2,11 @@ package simpleping
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"net/http"
+	"net/url"
+	"strconv"
 	"time"
 
 	"encoding/json"
@@ -188,4 +192,52 @@ func startPinging(cfg *PingConfiguration) <-chan pkgpinger.PingEvent {
 	}()
 
 	return eventCh
+}
+
+type SimpleRemotePinger struct {
+	fullURL *url.URL
+}
+
+func encodeURLQueryForSimpleRemotePinger(cfg *PingConfiguration) url.Values {
+	query := url.Values{}
+	query.Add("destination", cfg.Destination)
+	query.Add("count", strconv.Itoa(cfg.Count))
+	query.Add("timeout", strconv.Itoa(int(cfg.Timeout.Seconds())))
+	query.Add("interval", strconv.Itoa(int(cfg.Interval.Seconds())))
+	return query
+}
+
+func NewSimpleRemotePinger(remoteEndpoint string, cfg *PingConfiguration) (*SimpleRemotePinger, error) {
+	parsedURL, err := url.Parse(remoteEndpoint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse remote endpoint: %w", err)
+	}
+	
+	urlQuery := encodeURLQueryForSimpleRemotePinger(cfg)
+	parsedURL.RawQuery = urlQuery.Encode()
+	return &SimpleRemotePinger{
+		fullURL: parsedURL,
+	}, nil
+}
+
+func (srPinger *SimpleRemotePinger) Ping(ctx context.Context) <-chan pkgpinger.PingEvent {
+	
+	evChan := make(chan pkgpinger.PingEvent)
+
+	go func() {
+		defer close(evChan)
+		resp, err :=http.Get(srPinger.fullURL.String())
+		if err != nil {
+			evChan <- pkgpinger.PingEvent{
+				Type: pkgpinger.PingEventTypeError,
+				Error: err,
+			}
+			return
+		}
+		defer resp.Body.Close()
+		decoder := json.NewDecoder(resp.Body)
+		
+	}()
+
+	return evChan
 }

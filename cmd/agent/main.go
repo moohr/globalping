@@ -20,6 +20,7 @@ var nodeName = flag.String("node-name", "agent-1", "node name")
 var logEchoReplies = flag.Bool("log-echo-replies", false, "log echo replies")
 var rabbitMQBrokerURL = flag.String("rabbitmq-broker-url", "amqp://localhost:5672/", "RabbitMQ broker URL")
 
+// todo: 实现一个 RemoteSimplePinger，它代表一个（可能是部署在远端的）executor，一个 RemoteSimplePinger 封装针对远程 executor 的调用。
 func main() {
 	flag.Parse()
 	sigs := make(chan os.Signal, 1)
