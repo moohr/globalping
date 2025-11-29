@@ -23,8 +23,6 @@ var path = flag.String("path", "/ws", "websocket path")
 var nodeName = flag.String("node-name", "agent-1", "node name")
 var logEchoReplies = flag.Bool("log-echo-replies", false, "log echo replies")
 var rabbitMQBrokerURL = flag.String("rabbitmq-broker-url", "amqp://localhost:5672/", "RabbitMQ broker URL")
-var remotePingerEndpoint = flag.String("remote-pinger-endpoint", "unix:///var/run/simple-pinger.sock", "Remote pinger endpoint")
-var remotePingerPath = flag.String("remote-pinger-http-path", "/ping", "Remote pinger HTTP path")
 
 func handleTask(ctx context.Context, taskMsg *amqp.Delivery, updatesCh chan<- pkgrbmqrpc.TaskUpdate) {
 
@@ -38,20 +36,8 @@ func handleTask(ctx context.Context, taskMsg *amqp.Delivery, updatesCh chan<- pk
 		return
 	}
 
-	remotePingerSpec := pkgsimpleping.RemotePingerSpec{
-		BaseURL:  *remotePingerEndpoint,
-		HTTPPath: *remotePingerPath,
-	}
-
 	log.Printf("Message %s corr_id %s is a PingConfiguration, destination %s", taskMsg.MessageId, taskMsg.CorrelationId, pingCfg.Destination)
-	pinger, err := pkgsimpleping.NewSimpleRemotePinger(remotePingerSpec, &pingCfg, *nodeName)
-	if err != nil {
-		updatesCh <- pkgrbmqrpc.TaskUpdate{
-			Err:     fmt.Errorf("failed to create remote pinger: %w", err),
-			TaskMsg: taskMsg,
-		}
-		return
-	}
+	pinger := pkgsimpleping.NewSimplePinger(&pingCfg)
 
 	log.Println("Starting to ping destination:", pingCfg.Destination, "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId)
 	pingEvents := pinger.Ping(ctx)
