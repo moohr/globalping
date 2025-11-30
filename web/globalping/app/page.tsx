@@ -11,8 +11,16 @@ import {
   TableCell,
   TableBody,
   TextField,
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  IconButton,
+  Tooltip,
 } from "@mui/material";
 import { Fragment, useEffect, useMemo, useState } from "react";
+import CloseIcon from "@mui/icons-material/CloseOutlined";
 
 type PingSample = {
   from: string;
@@ -165,6 +173,39 @@ function PingResultDisplay(props: {
   );
 }
 
+function TaskCloseIconButton(props: {
+  onConfirmedClosed: () => void;
+  taskId: string;
+}) {
+  const { onConfirmedClosed, taskId } = props;
+  const [showDialog, setShowDialog] = useState<boolean>(false);
+  return (
+    <Fragment>
+      <Tooltip title="Close Task">
+        <IconButton
+          onClick={() => {
+            setShowDialog(true);
+          }}
+        >
+          <CloseIcon />
+        </IconButton>
+      </Tooltip>
+      <Dialog open={showDialog} onClose={() => setShowDialog(false)}>
+        <DialogTitle>Close Task</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to close task #{taskId}?
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowDialog(false)}>Cancel</Button>
+          <Button onClick={onConfirmedClosed}>Close</Button>
+        </DialogActions>
+      </Dialog>
+    </Fragment>
+  );
+}
+
 function generateFakePingSampleStream(
   sources: string[],
   targets: string[]
@@ -201,43 +242,135 @@ function generateFakePingSampleStream(
   });
 }
 
+type PendingTask = {
+  sources: string[];
+  targets: string[];
+  taskId: string;
+  stream?: ReadableStream<PingSample>;
+};
+function TaskConfirmDialog(props: {
+  pendingTask: PendingTask;
+  open: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const { open, pendingTask, onConfirm, onCancel } = props;
+
+  return (
+    <Fragment>
+      <Dialog open={open} onClose={onCancel}>
+        <DialogTitle>Confirm Task</DialogTitle>
+        <DialogContent>
+          <Typography>Sources: {pendingTask.sources.join(", ")}</Typography>
+          <Typography>Targets: {pendingTask.targets.join(", ")}</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={onCancel}>Cancel</Button>
+          <Button onClick={onConfirm}>Confirm</Button>
+        </DialogActions>
+      </Dialog>
+    </Fragment>
+  );
+}
+
 export default function Home() {
   const pingSamples: PingSample[] = [];
 
-  const [sources, setSources] = useState<string[]>(fakeSources);
-  const [targets, setTargets] = useState<string[]>(fakeTargets);
-  const [target, setTarget] = useState<string>("");
+  const [pendingTask, setPendingTask] = useState<PendingTask>(() => {
+    return {
+      sources: [],
+      targets: [],
+      taskId: "",
+    };
+  });
+  const [openTaskConfirmDialog, setOpenTaskConfirmDialog] =
+    useState<boolean>(false);
 
-  const sampleStream = useMemo(
-    () => generateFakePingSampleStream(sources, targets),
-    [sources, targets]
-  );
+  const [sourcesInput, setSourcesInput] = useState<string>("");
+  const [targetsInput, setTargetsInput] = useState<string>("");
+
+  const fakeTasks = useMemo(() => {
+    return [
+      {
+        sources: fakeSources,
+        targets: fakeTargets,
+        taskId: "1",
+        stream: generateFakePingSampleStream(fakeSources, fakeTargets),
+      },
+    ] as PendingTask[];
+  }, []);
+  const [onGoingTasks, setOnGoingTasks] = useState<PendingTask[]>(fakeTasks);
 
   return (
-    <Box sx={{ padding: 2, display: "flex", flexDirection: "column", gap: 2 }}>
-      <Card>
-        <CardContent>
-          <Typography variant="h6">GlobalPing</Typography>
-          <Box sx={{ marginTop: 2 }}>
-            <TextField
-              variant="standard"
-              fullWidth
-              label="Target"
-              value={target}
-              onChange={(e) => setTarget(e.target.value)}
-            />
-          </Box>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent>
-          <PingResultDisplay
-            resultStream={sampleStream}
-            sources={sources}
-            targets={targets}
-          />
-        </CardContent>
-      </Card>
-    </Box>
+    <Fragment>
+      <Box
+        sx={{ padding: 2, display: "flex", flexDirection: "column", gap: 2 }}
+      >
+        <Card>
+          <CardContent>
+            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+              <Typography variant="h6">GlobalPing</Typography>
+              <Button>Add Task</Button>
+            </Box>
+            <Box sx={{ marginTop: 2 }}>
+              <TextField
+                variant="standard"
+                placeholder="Sources, separated by comma"
+                fullWidth
+                label="Sources"
+                value={sourcesInput}
+                onChange={(e) => setSourcesInput(e.target.value)}
+              />
+            </Box>
+            <Box sx={{ marginTop: 2 }}>
+              <TextField
+                variant="standard"
+                placeholder="Targets, separated by comma"
+                fullWidth
+                label="Targets"
+                value={targetsInput}
+                onChange={(e) => setTargetsInput(e.target.value)}
+              />
+            </Box>
+          </CardContent>
+        </Card>
+        {onGoingTasks.map((task) => (
+          <Card key={task.taskId}>
+            <CardContent>
+              <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                <Typography variant="h6">Task #{task.taskId}</Typography>
+                <TaskCloseIconButton
+                  taskId={task.taskId}
+                  onConfirmedClosed={() => {
+                    setOnGoingTasks(
+                      onGoingTasks.filter((t) => t.taskId !== task.taskId)
+                    );
+                  }}
+                />
+              </Box>
+              {task.stream ? (
+                <PingResultDisplay
+                  resultStream={task.stream}
+                  sources={task.sources}
+                  targets={task.targets}
+                />
+              ) : (
+                <Typography>Task is pending</Typography>
+              )}
+            </CardContent>
+          </Card>
+        ))}
+      </Box>
+      <TaskConfirmDialog
+        pendingTask={pendingTask}
+        open={openTaskConfirmDialog}
+        onCancel={() => {
+          setOpenTaskConfirmDialog(false);
+        }}
+        onConfirm={() => {
+          window.alert("Task confirmed");
+        }}
+      />
+    </Fragment>
   );
 }
