@@ -60,7 +60,7 @@ func main() {
 	muxer.Handle("/ping-task", pingTaskHandler)
 
 	server := http.Server{
-		Handler: muxer,
+		Handler: pkghandler.NewWithCORSHandler(muxer),
 	}
 
 	listener, err := net.Listen("tcp", *addr)
