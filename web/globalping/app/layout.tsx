@@ -21,6 +21,14 @@ const geistMono = Geist_Mono({
 
 const theme = createTheme({
   colorSchemes: {
+    light: {
+      palette: {
+        background: {
+          default: "#f5f5f5",
+          paper: "#ffffff",
+        },
+      },
+    },
     dark: true,
   },
   components: {
