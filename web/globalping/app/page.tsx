@@ -389,10 +389,10 @@ export default function Home() {
                   .filter((s) => s.length > 0)}
                 onChange={(value) => setSourcesInput(value.join(","))}
                 getOptions={() => {
-                  return getCurrentPingers();
-                  // return new Promise((res) => {
-                  //   window.setTimeout(() => res(fakeSources), 2000);
-                  // });
+                  // return getCurrentPingers();
+                  return new Promise((res) => {
+                    window.setTimeout(() => res(fakeSources), 2000);
+                  });
                 }}
               />
             </Box>
