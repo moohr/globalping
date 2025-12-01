@@ -27,6 +27,7 @@ import {
   getCurrentPingers,
   PingSample,
   generateFakePingSampleStream,
+  generatePingSampleStream,
 } from "@/apis/globalping";
 
 const fakeSources = [
@@ -79,7 +80,8 @@ function PingResultDisplay(props: { pendingTask: PendingTask }) {
   };
 
   useEffect(() => {
-    const resultStream = generateFakePingSampleStream(sources, targets);
+    // const resultStream = generateFakePingSampleStream(sources, targets);
+    const resultStream = generatePingSampleStream(sources, targets, 1000, 500);
     const reader = resultStream.getReader();
     const readNext = (props: {
       done: boolean;
