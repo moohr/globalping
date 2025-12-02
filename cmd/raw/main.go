@@ -246,7 +246,6 @@ func (it *ICMPTracker) tryMarkAsTimeout(ctx context.Context, seq int) error {
 		}
 		return nil
 	}
-	resultCh := make(chan error)
 
 	select {
 	case requestCh, ok := <-it.serviceChan:
@@ -255,6 +254,8 @@ func (it *ICMPTracker) tryMarkAsTimeout(ctx context.Context, seq int) error {
 			return nil
 		}
 		defer close(requestCh)
+		resultCh := make(chan error)
+		defer close(resultCh)
 
 		requestCh <- ServiceRequest{
 			Func:   fn,
@@ -272,6 +273,10 @@ func (it *ICMPTracker) MarkReceived(seq int) error {
 
 	fn := func(ctx context.Context) error {
 		if ent, ok := it.store[seq]; ok {
+			if ent.Timer != nil {
+				ent.Timer.Stop()
+				ent.Timer = nil
+			}
 			if ent.ReceivedAt == nil {
 				it.nrUnAck--
 			}
