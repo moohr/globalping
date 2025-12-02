@@ -15,6 +15,7 @@ import (
 type ICMPTrackerEntry struct {
 	SentAt     time.Time
 	ReceivedAt []time.Time
+	Timer      *time.Timer
 }
 
 func (itEnt *ICMPTrackerEntry) HasReceived() bool {
@@ -47,12 +48,16 @@ type ICMPTracker struct {
 	closeCh     chan interface{}
 	nrUnAck     int
 	nrMaxCount  *int
+	intv        time.Duration
+	pktTimeout  time.Duration
 }
 
 type ICMPTrackerConfig struct {
-	ID         int
-	InitialSeq int
-	MaxCount   *int
+	ID            int
+	InitialSeq    int
+	MaxCount      *int
+	PacketTimeout time.Duration
+	Interval      time.Duration
 }
 
 func NewICMPTracker(config *ICMPTrackerConfig) *ICMPTracker {
@@ -63,6 +68,8 @@ func NewICMPTracker(config *ICMPTrackerConfig) *ICMPTracker {
 		nrMaxCount:  config.MaxCount,
 		store:       make(map[int]*ICMPTrackerEntry),
 		serviceChan: make(chan chan ServiceRequest),
+		intv:        config.Interval,
+		pktTimeout:  config.PacketTimeout,
 	}
 	return it
 }
@@ -93,16 +100,22 @@ func (it *ICMPTracker) MarkSent(seq int) error {
 
 	fn := func(ctx context.Context) error {
 
-		it.store[seq] = &ICMPTrackerEntry{
+		ent := &ICMPTrackerEntry{
 			SentAt: time.Now(),
+			Timer:  time.NewTimer(it.pktTimeout),
 		}
+		it.store[seq] = ent
 		it.nrUnAck++
+
+		go func() {
+			<-ent.Timer.C
+			it.tryMarkAsTimeout(seq)
+		}()
 
 		return nil
 	}
 
 	resultCh := make(chan error)
-
 	requestCh <- ServiceRequest{
 		Func:   fn,
 		Result: resultCh,
@@ -111,15 +124,17 @@ func (it *ICMPTracker) MarkSent(seq int) error {
 	return <-resultCh
 }
 
-func (it *ICMPTracker) MarkTimeout(seq int) error {
+func (it *ICMPTracker) tryMarkAsTimeout(seq int) error {
 	requestCh := <-it.serviceChan
 	defer close(requestCh)
 
 	fn := func(ctx context.Context) error {
 		if ent, ok := it.store[seq]; ok {
-			if ent.ReceivedAt == nil {
-				it.nrUnAck--
+			if len(ent.ReceivedAt) > 0 {
+				return nil
 			}
+
+			it.nrUnAck--
 			var zeroTime time.Time
 			ent.ReceivedAt = append(ent.ReceivedAt, zeroTime)
 		}
@@ -174,6 +189,7 @@ func (it *ICMPTracker) GetNrUnAck() int {
 		Func:   fn,
 		Result: resultCh,
 	}
+	<-resultCh
 	return *nrUnAck
 }
 
@@ -199,8 +215,41 @@ func (it *ICMPTracker) IterateSeq() int {
 		Func:   fn,
 		Result: resultCh,
 	}
-
+	<-resultCh
 	return *seqPtr
+}
+
+func shouldICMPTrackerContinue(latestSeq, initSeq, maxCount int) bool {
+	return (latestSeq - initSeq) < maxCount
+}
+
+func (it *ICMPTracker) WaitForNext() time.Duration {
+	requestCh := <-it.serviceChan
+	defer close(requestCh)
+
+	noSleep := time.Duration(0)
+	var sleepDuration *time.Duration = &noSleep
+
+	fn := func(ctx context.Context) error {
+		// don't actually sleep here, just determine the sleep duration
+		if it.nrMaxCount != nil {
+			if shouldICMPTrackerContinue(it.latestSeq, it.initSeq, *it.nrMaxCount) {
+				// sleep only if there's still more to send
+				*sleepDuration = it.intv
+			}
+		} else {
+			// there's always more to send
+			*sleepDuration = it.intv
+		}
+		return nil
+	}
+	resultCh := make(chan error)
+	requestCh <- ServiceRequest{
+		Func:   fn,
+		Result: resultCh,
+	}
+	<-resultCh
+	return *sleepDuration
 }
 
 func (it *ICMPTracker) IsNotDone() bool {
@@ -211,7 +260,7 @@ func (it *ICMPTracker) IsNotDone() bool {
 	fn := func(ctx context.Context) error {
 		var cont bool
 		if it.nrMaxCount != nil {
-			cont = (it.latestSeq - it.initSeq) < *it.nrMaxCount
+			cont = shouldICMPTrackerContinue(it.latestSeq, it.initSeq, *it.nrMaxCount)
 		} else {
 			cont = true
 		}
@@ -223,7 +272,7 @@ func (it *ICMPTracker) IsNotDone() bool {
 		Func:   fn,
 		Result: resultCh,
 	}
-
+	<-resultCh
 	return *contPtr
 }
 
@@ -259,9 +308,11 @@ func main() {
 	icmpID := os.Getpid() & 0xffff
 	maxCount := 10
 	icmpTrackerConfig := &ICMPTrackerConfig{
-		ID:         icmpID,
-		InitialSeq: 0,
-		MaxCount:   &maxCount,
+		ID:            icmpID,
+		InitialSeq:    0,
+		MaxCount:      &maxCount,
+		PacketTimeout: 3 * time.Second,
+		Interval:      500 * time.Millisecond,
 	}
 	tracker := NewICMPTracker(icmpTrackerConfig)
 
@@ -284,17 +335,18 @@ func main() {
 
 			if icmpEcho, ok := tracker.IsRelevant(receivMsg); ok {
 				log.Printf("received echo packet, type: %v, id: %v, seq: %v, code: %v, body length: %v, peer: %v", receivMsg.Type, icmpEcho.ID, icmpEcho.Seq, receivMsg.Code, receivMsg.Body.Len(int(receivMsg.Type.Protocol())), peer.String())
+				tracker.MarkReceived(icmpEcho.Seq)
 			}
 		}
 	}()
 
-	intv := 500 * time.Millisecond
 	for tracker.IsNotDone() {
+		seq := tracker.IterateSeq()
 		writeMsg := icmp.Message{
 			Type: ipv4.ICMPTypeEcho,
 			Body: &icmp.Echo{
 				ID:  icmpID,
-				Seq: tracker.IterateSeq(),
+				Seq: seq,
 			},
 		}
 		writeBuff, err := writeMsg.Marshal(nil)
@@ -305,7 +357,10 @@ func main() {
 		if _, err := conn.WriteTo(writeBuff, &net.IPAddr{IP: net.ParseIP("8.8.4.4")}); err != nil {
 			log.Fatalf("failed to write to connection: %v", err)
 		}
-		time.Sleep(intv)
+		tracker.MarkSent(seq)
+		if sleepDur := tracker.WaitForNext(); sleepDur > 0 {
+			time.Sleep(sleepDur)
+		}
 	}
 
 	<-receiveCh
