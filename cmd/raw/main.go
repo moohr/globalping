@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
-	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -467,7 +467,10 @@ func main() {
 
 	defer conn.Close()
 
-	icmpID := os.Getpid() & 0xffff
+	// Choose icmp packet id randomly instead of deterministically using the process ID,
+	// so to ensure that there won't be conflicts even when multiple goroutines are running
+	// and each having their own ICMPTracker instance.
+	icmpID := rand.Intn(0xffff)
 	maxCount := 10
 	pktTimeout := 3 * time.Second
 	icmpTrackerConfig := &ICMPTrackerConfig{

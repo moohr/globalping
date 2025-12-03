@@ -93,6 +93,8 @@ type PingEvent = {
   };
   metadata?: {
     from?: string;
+    // target could also be here, not just in the data field
+    target?: string;
   };
 };
 
@@ -110,29 +112,22 @@ class LineTokenizer extends TransformStream<string, TokenObject> {
         chunk: string,
         controller: TransformStreamDefaultController<TokenObject>
       ) {
-        // 将新数据添加到缓冲区
         buffer += chunk;
 
-        // 查找并分割所有完整的行
         let newlineIndex;
         while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
-          // 提取一行（不包括换行符）
           const line = buffer.slice(0, newlineIndex);
 
-          // 处理可能的回车符（Windows 风格的 \r\n）
           const cleanLine = line.endsWith("\r") ? line.slice(0, -1) : line;
 
-          // 发送行
           console.log("[dbg] enqueueing line:", cleanLine);
           controller.enqueue({ content: cleanLine });
 
-          // 从缓冲区移除已处理的行
           buffer = buffer.slice(newlineIndex + 1);
         }
       },
 
       flush(controller: TransformStreamDefaultController<TokenObject>) {
-        // 发送缓冲区中剩余的数据（最后一行，如果没有换行符）
         if (buffer) {
           const cleanLine = buffer.endsWith("\r")
             ? buffer.slice(0, -1)
@@ -182,13 +177,13 @@ function pingSampleFromEvent(event: PingEvent): PingSample | undefined {
   if (event.type === "pkt_recv") {
     return {
       from: event.metadata?.from || "",
-      target: event.data?.target || "",
+      target: event.data?.target || event.metadata?.target || "",
       latencyMs: event.data?.rtt ?? 0,
     };
   } else if (event.type === "ping_stats") {
     return {
       from: event.metadata?.from || "",
-      target: event.data?.target || "",
+      target: event.data?.target || event.metadata?.target || "",
       latencyMs: event.data?.rtt ?? event.data?.avg_rtt ?? 0,
     };
   }
