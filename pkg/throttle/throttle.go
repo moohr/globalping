@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// todo: this is a todo
 type TokenBasedThrottleConfig struct {
 	RefreshInterval       time.Duration
 	TokenQuotaPerInterval int
@@ -17,9 +16,8 @@ type RateLimiterToken struct {
 }
 
 type TokenBasedThrottle struct {
-	OutC      chan interface{}
-	config    TokenBasedThrottleConfig
-	serviceCh chan *RateLimiterToken
+	OutC   chan interface{}
+	config TokenBasedThrottleConfig
 }
 
 func NewTokenBasedThrottle(config TokenBasedThrottleConfig) *TokenBasedThrottle {
@@ -28,58 +26,104 @@ func NewTokenBasedThrottle(config TokenBasedThrottleConfig) *TokenBasedThrottle 
 	}
 }
 
-func (tbThrottle *TokenBasedThrottle) Run(ctx context.Context) {
-	// start fifo muxer
-	muxerCh := make(chan chan interface{})
-	go func() {
-		for subChan := range muxerCh {
-			for item := range subChan {
-				tbThrottle.OutC <- item
-			}
-		}
-	}()
+func (tbThrottle *TokenBasedThrottle) Run(inChan <-chan interface{}) <-chan interface{} {
+	outChan := make(chan interface{})
 
-	// start server
-	go func() {
-		defer close(tbThrottle.serviceCh)
-		defer close(muxerCh)
+	ctx := context.TODO()
+	ctx, cancel := context.WithCancel(ctx)
 
-		quota := tbThrottle.config.TokenQuotaPerInterval
-		refresher := time.NewTicker(tbThrottle.config.RefreshInterval)
+	tokensChan := make(chan int, 1)
+	tokensChan <- tbThrottle.config.TokenQuotaPerInterval
+
+	// token generator goroutine
+	go func() {
+		ticker := time.NewTicker(tbThrottle.config.RefreshInterval)
+		defer ticker.Stop()
+		defer close(tokensChan)
 
 		for {
-			token := &RateLimiterToken{
-				Quota:        quota,
-				BufferedChan: make(chan interface{}, quota),
-			}
-
 			select {
 			case <-ctx.Done():
 				return
-			case <-refresher.C:
-				quota = tbThrottle.config.TokenQuotaPerInterval
-			case tbThrottle.serviceCh <- token:
-				muxerCh <- token.BufferedChan
+			case <-ticker.C:
+				tokensChan <- tbThrottle.config.TokenQuotaPerInterval
 			}
 		}
 	}()
+
+	// copying goroutine
+	go func() {
+		defer close(outChan)
+		defer cancel()
+
+		quota := 0
+		for item := range inChan {
+			if quota == 0 {
+				quotaInc := <-tokensChan
+				quota += quotaInc
+				if quota > tbThrottle.config.TokenQuotaPerInterval {
+					quota = tbThrottle.config.TokenQuotaPerInterval
+				}
+			}
+			outChan <- item
+			quota--
+		}
+
+	}()
+
+	return outChan
 }
 
-func (tbThrottle *TokenBasedThrottle) GetWriter() chan<- interface{} {
-	inputCh := make(chan interface{})
-	go func() {
-		var upstreamCh chan interface{}
-		var upstreamQuota int = 0
+type SpeedMeasurer struct {
+	RefreshInterval time.Duration
+}
 
-		for item := range inputCh {
-			if upstreamQuota == 0 || upstreamCh == nil {
-				newToken := <-tbThrottle.serviceCh
-				upstreamCh = newToken.BufferedChan
-				upstreamQuota = newToken.Quota
+type SpeedRecord struct {
+	Timestamp time.Time
+	Counter   int
+}
+
+func (sm *SpeedMeasurer) Run(inChan <-chan interface{}) (<-chan interface{}, <-chan SpeedRecord) {
+	outChan := make(chan interface{})
+	speedRecordChan := make(chan SpeedRecord, 1)
+
+	ctx := context.TODO()
+	ctx, cancel := context.WithCancel(ctx)
+
+	var counter *int = new(int)
+	*counter = 0
+
+	go func() {
+		defer close(speedRecordChan)
+		speedRecord := SpeedRecord{
+			Timestamp: time.Now(),
+			Counter:   *counter,
+		}
+		speedRecordChan <- speedRecord
+		ticker := time.NewTicker(sm.RefreshInterval)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				speedRecord := SpeedRecord{
+					Timestamp: time.Now(),
+					Counter:   *counter,
+				}
+				speedRecordChan <- speedRecord
 			}
-			upstreamCh <- item
-			upstreamQuota--
 		}
 	}()
-	return inputCh
+
+	go func() {
+		defer close(outChan)
+		defer cancel()
+
+		for item := range inChan {
+			outChan <- item
+			*counter = *counter + 1
+		}
+	}()
+
+	return outChan, speedRecordChan
 }
