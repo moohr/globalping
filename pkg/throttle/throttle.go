@@ -128,11 +128,11 @@ func (sm *SpeedMeasurer) Run(inChan <-chan interface{}) (<-chan interface{}, <-c
 	return outChan, speedRecordChan
 }
 
-type BurstFlattener struct {
+type BurstSmoother struct {
 	LeastSampleInterval time.Duration
 }
 
-func (bf *BurstFlattener) Run(inChan <-chan interface{}) <-chan interface{} {
+func (bf *BurstSmoother) Run(inChan <-chan interface{}) <-chan interface{} {
 	outChan := make(chan interface{})
 
 	go func() {
