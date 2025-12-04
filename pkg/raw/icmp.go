@@ -51,6 +51,9 @@ type ICMPTransceiverConfig struct {
 
 	// Custom resolver might be provided by the user
 	CustomResolver *net.Resolver
+
+	PreferV6 bool
+	PreferV4 bool
 }
 
 type ICMPTransceiver struct {
@@ -150,34 +153,57 @@ func checkInetFamilySupportness() (v4 bool, v6 bool, err error) {
 	return v4, v6, nil
 }
 
-func (icmpTR *ICMPTransceiver) Run(ctx context.Context) error {
-
+func (icmpTR *ICMPTransceiver) getIpCandidates(ctx context.Context) ([]net.IP, error) {
 	v4Sup, v6Sup, err := checkInetFamilySupportness()
 	if err != nil {
-		return fmt.Errorf("can't determine internet family supportness: %v", err)
+		return nil, fmt.Errorf("can't determine internet family supportness: %v", err)
 	}
 
 	if !v4Sup && !v6Sup {
-		return fmt.Errorf("no internet family supportness found")
+		return nil, fmt.Errorf("no internet family supportness found")
 	}
 
-	// a nil resolver is a default resolver
+	// no need to check the nil-ness of resolver, a nil resolver behaves exactly as a default resolver.
 	var resolver *net.Resolver = icmpTR.config.CustomResolver
 	ipCandidates := make([]net.IP, 0)
+	v6Only := make([]net.IP, 0)
+	v4Only := make([]net.IP, 0)
 	if v6Sup {
 		v6IPs, err := resolver.LookupIP(ctx, "ip6", icmpTR.config.Destination)
 		if err == nil {
 			ipCandidates = append(ipCandidates, v6IPs...)
 		}
+		v6Only = v6IPs
 	}
 	if v4Sup {
 		v4IPs, err := resolver.LookupIP(ctx, "ip4", icmpTR.config.Destination)
 		if err == nil {
 			ipCandidates = append(ipCandidates, v4IPs...)
 		}
+		v4Only = v4IPs
 	}
 	if len(ipCandidates) == 0 {
-		return fmt.Errorf("no ip candidates found for destination %s", icmpTR.config.Destination)
+		return nil, fmt.Errorf("no ip candidates found for destination %s", icmpTR.config.Destination)
+	}
+	if icmpTR.config.PreferV6 {
+		if len(v6Only) == 0 {
+			return nil, fmt.Errorf("user preferred v6 but there is no v6 ip candidates")
+		}
+		ipCandidates = v6Only
+	} else if icmpTR.config.PreferV4 {
+		if len(v4Only) == 0 {
+			return nil, fmt.Errorf("user preferred v4 but there is no v4 ip candidates")
+		}
+		ipCandidates = v4Only
+	}
+	return ipCandidates, nil
+}
+
+func (icmpTR *ICMPTransceiver) Run(ctx context.Context) error {
+
+	ipCandidates, err := icmpTR.getIpCandidates(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get ip candidates: %v", err)
 	}
 
 	icmpTR.DestinationIP = ipCandidates[0]
