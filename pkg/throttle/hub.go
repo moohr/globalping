@@ -1,12 +1,10 @@
-package hub
+package throttle
 
 import (
 	"context"
 	"fmt"
 	"log"
 	"math/rand"
-
-	pkgratelimit "example.com/rbmq-demo/pkg/throttle"
 )
 
 type ServiceRequest struct {
@@ -14,13 +12,13 @@ type ServiceRequest struct {
 	Result chan error
 }
 
-type ICMPTransceiveProxy interface {
+type SharedThrottleProxy interface {
 	GetReader() <-chan interface{}
 	GetWriter() chan<- interface{}
 	Close()
 }
 
-type ICMPHubProxyEntry struct {
+type SharedThrottleProxyEntry struct {
 	// In: From Proxy user to the Hub, i.e. the proxy user writes, while the hub reads.
 	In chan interface{}
 
@@ -31,42 +29,42 @@ type ICMPHubProxyEntry struct {
 	labelKey       string
 }
 
-type ICMPTransceiveProxyImpl struct {
+type SharedThrottleProxyImpl struct {
 	id       int
-	hubEntry *ICMPHubProxyEntry
+	hubEntry *SharedThrottleProxyEntry
 }
 
-func (proxy *ICMPTransceiveProxyImpl) GetReader() <-chan interface{} {
+func (proxy *SharedThrottleProxyImpl) GetReader() <-chan interface{} {
 	return proxy.hubEntry.Out
 }
 
-func (proxy *ICMPTransceiveProxyImpl) GetWriter() chan<- interface{} {
+func (proxy *SharedThrottleProxyImpl) GetWriter() chan<- interface{} {
 	return proxy.hubEntry.In
 }
 
-func (proxy *ICMPTransceiveProxyImpl) Close() {
+func (proxy *SharedThrottleProxyImpl) Close() {
 	close(proxy.hubEntry.In)
 }
 
-type ICMPTransceiveHub struct {
-	proxies     map[int]*ICMPHubProxyEntry
+type SharedThrottleHub struct {
+	proxies     map[int]*SharedThrottleProxyEntry
 	serviceChan chan chan ServiceRequest
-	mimoSched   *pkgratelimit.MIMOScheduler
+	mimoSched   *MIMOScheduler
 }
 
-type ICMPTransceiveHubConfig struct {
-	MIMOScheduler *pkgratelimit.MIMOScheduler
+type SharedThrottleHubConfig struct {
+	MIMOScheduler *MIMOScheduler
 }
 
-func NewICMPTransceiveHub(config *ICMPTransceiveHubConfig) *ICMPTransceiveHub {
-	return &ICMPTransceiveHub{
-		proxies:     make(map[int]*ICMPHubProxyEntry),
+func NewICMPTransceiveHub(config *SharedThrottleHubConfig) *SharedThrottleHub {
+	return &SharedThrottleHub{
+		proxies:     make(map[int]*SharedThrottleProxyEntry),
 		serviceChan: make(chan chan ServiceRequest),
 		mimoSched:   config.MIMOScheduler,
 	}
 }
 
-func (hub *ICMPTransceiveHub) Run(ctx context.Context) {
+func (hub *SharedThrottleHub) Run(ctx context.Context) {
 	log.Println("[DBG] the hub is started")
 	go func() {
 		defer close(hub.serviceChan)
@@ -87,7 +85,7 @@ func (hub *ICMPTransceiveHub) Run(ctx context.Context) {
 	}()
 }
 
-func (hub *ICMPTransceiveHub) generateNextProxyID() int {
+func (hub *SharedThrottleHub) generateNextProxyID() int {
 	result := -1
 	maxRetries := 10
 	for {
@@ -117,13 +115,13 @@ type TestPacket struct {
 	Id   int
 }
 
-func (hub *ICMPTransceiveHub) GetProxy() ICMPTransceiveProxy {
+func (hub *SharedThrottleHub) GetProxy() SharedThrottleProxy {
 	log.Println("[DBG] getting a new proxy")
 	requestCh := <-hub.serviceChan
 	defer close(requestCh)
 
 	var handlerId *int = new(int)
-	var hubEntry *ICMPHubProxyEntry = &ICMPHubProxyEntry{
+	var hubEntry *SharedThrottleProxyEntry = &SharedThrottleProxyEntry{
 		In:  make(chan interface{}),
 		Out: make(chan interface{}),
 	}
@@ -172,7 +170,7 @@ func (hub *ICMPTransceiveHub) GetProxy() ICMPTransceiveProxy {
 		}
 	}()
 
-	return &ICMPTransceiveProxyImpl{
+	return &SharedThrottleProxyImpl{
 		id:       *handlerId,
 		hubEntry: hubEntry,
 	}

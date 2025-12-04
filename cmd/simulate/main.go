@@ -8,21 +8,20 @@ import (
 	"syscall"
 	"time"
 
-	pkghub "example.com/rbmq-demo/pkg/hub"
-	pkgratelimit "example.com/rbmq-demo/pkg/throttle"
+	pkgthrottle "example.com/rbmq-demo/pkg/throttle"
 )
 
 func main() {
-	throttleConfig := pkgratelimit.TokenBasedThrottleConfig{
+	throttleConfig := pkgthrottle.TokenBasedThrottleConfig{
 		RefreshInterval:       1 * time.Second,
 		TokenQuotaPerInterval: 20,
 	}
-	smootherConfig := pkgratelimit.BurstSmoother{
+	smootherConfig := pkgthrottle.BurstSmoother{
 		LeastSampleInterval: 100 * time.Millisecond,
 	}
-	mimoScheduler := pkgratelimit.NewMIMOScheduler(throttleConfig, smootherConfig)
+	mimoScheduler := pkgthrottle.NewMIMOScheduler(throttleConfig, smootherConfig)
 
-	icmpHub := pkghub.NewICMPTransceiveHub(&pkghub.ICMPTransceiveHubConfig{
+	icmpHub := pkgthrottle.NewICMPTransceiveHub(&pkgthrottle.SharedThrottleHubConfig{
 		MIMOScheduler: mimoScheduler,
 	})
 	ctx := context.TODO()
@@ -49,9 +48,9 @@ func main() {
 		lastSeq := 0
 
 		for {
-			mockPacket := pkghub.TestPacket{
+			mockPacket := pkgthrottle.TestPacket{
 				Host: "www.example.com",
-				Type: pkghub.TestPacketTypePing,
+				Type: pkgthrottle.TestPacketTypePing,
 				Seq:  lastSeq,
 				Id:   1,
 			}
@@ -74,9 +73,9 @@ func main() {
 		writeCh := hubProxy2.GetWriter()
 
 		for {
-			mockPacket := pkghub.TestPacket{
+			mockPacket := pkgthrottle.TestPacket{
 				Host: "x.com",
-				Type: pkghub.TestPacketTypePing,
+				Type: pkgthrottle.TestPacketTypePing,
 				Seq:  lastSeq,
 				Id:   1,
 			}
@@ -95,7 +94,7 @@ func main() {
 		defer log.Println("[DBG] receiver 1 closed")
 		log.Println("[DBG] receiver 1 started")
 
-		speedMeter := pkgratelimit.SpeedMeasurer{
+		speedMeter := pkgthrottle.SpeedMeasurer{
 			RefreshInterval: 250 * time.Millisecond,
 			MinTimeDelta:    250 * time.Millisecond,
 		}
@@ -108,7 +107,7 @@ func main() {
 			}
 		}()
 		for pong := range readCh {
-			if pongPkt, ok := pong.(pkghub.TestPacket); ok && pongPkt.Type == pkghub.TestPacketTypePong {
+			if pongPkt, ok := pong.(pkgthrottle.TestPacket); ok && pongPkt.Type == pkgthrottle.TestPacketTypePong {
 				// log.Printf("[DBG] receiver 1 Received pong: %+v", pongPkt)
 			}
 		}
@@ -119,7 +118,7 @@ func main() {
 		defer log.Println("[DBG] receiver 2 closed")
 		log.Println("[DBG] receiver 2 started")
 
-		speedMeter := pkgratelimit.SpeedMeasurer{
+		speedMeter := pkgthrottle.SpeedMeasurer{
 			RefreshInterval: 250 * time.Millisecond,
 			MinTimeDelta:    250 * time.Millisecond,
 		}
@@ -132,7 +131,7 @@ func main() {
 			}
 		}()
 		for pong := range readCh {
-			if pongPkt, ok := pong.(pkghub.TestPacket); ok && pongPkt.Type == pkghub.TestPacketTypePong {
+			if pongPkt, ok := pong.(pkgthrottle.TestPacket); ok && pongPkt.Type == pkgthrottle.TestPacketTypePong {
 				// log.Printf("[DBG] receiver 2 Received pong: %+v", pongPkt)
 			}
 		}
