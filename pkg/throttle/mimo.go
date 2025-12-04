@@ -268,7 +268,6 @@ func (evObj *EventObject) handleNewPktAvailable(sched *MIMOScheduler) error {
 
 	if wrappedPkt != nil {
 		go func() {
-			fmt.Printf("[DBG] sending packet: %+v\n", wrappedPkt.packet)
 			sched.muxedDataChan <- *wrappedPkt
 		}()
 	}
@@ -346,7 +345,6 @@ func (mimoSched *MIMOScheduler) Run(ctx context.Context) {
 				if !ok {
 					panic(fmt.Sprintf("Demuxer: Unexpected item type: %T", anywrappedItem))
 				}
-				fmt.Printf("[DBG] retrieved packet: %+v\n", wp.packet)
 
 				// Iterate over all active output bindings
 				mimoSched.outputBindings.Range(func(key, value interface{}) bool {
