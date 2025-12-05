@@ -19,6 +19,7 @@ type RateLimiterToken struct {
 }
 
 type TokenBasedThrottle struct {
+	InC    chan interface{}
 	OutC   chan interface{}
 	config TokenBasedThrottleConfig
 }
@@ -26,11 +27,20 @@ type TokenBasedThrottle struct {
 func NewTokenBasedThrottle(config TokenBasedThrottleConfig) *TokenBasedThrottle {
 	return &TokenBasedThrottle{
 		config: config,
+		InC:    make(chan interface{}),
+		OutC:   make(chan interface{}),
 	}
 }
 
-func (tbThrottle *TokenBasedThrottle) Run(inChan <-chan interface{}) <-chan interface{} {
-	outChan := make(chan interface{})
+func (tbThrottle *TokenBasedThrottle) GetInput() chan<- interface{} {
+	return tbThrottle.InC
+}
+
+func (tbThrottle *TokenBasedThrottle) GetOutput() <-chan interface{} {
+	return tbThrottle.OutC
+}
+
+func (tbThrottle *TokenBasedThrottle) Run() <-chan interface{} {
 
 	ctx := context.TODO()
 	ctx, cancel := context.WithCancel(ctx)
@@ -56,11 +66,11 @@ func (tbThrottle *TokenBasedThrottle) Run(inChan <-chan interface{}) <-chan inte
 
 	// copying goroutine
 	go func() {
-		defer close(outChan)
+		defer close(tbThrottle.OutC)
 		defer cancel()
 
 		quota := 0
-		for item := range inChan {
+		for item := range tbThrottle.InC {
 			if quota == 0 {
 				quotaInc := <-tokensChan
 				quota += quotaInc
@@ -68,12 +78,12 @@ func (tbThrottle *TokenBasedThrottle) Run(inChan <-chan interface{}) <-chan inte
 					quota = tbThrottle.config.TokenQuotaPerInterval
 				}
 			}
-			outChan <- item
+			tbThrottle.OutC <- item
 			quota--
 		}
 	}()
 
-	return outChan
+	return tbThrottle.OutC
 }
 
 type SpeedMeasurer struct {
@@ -161,18 +171,34 @@ func (sm *SpeedMeasurer) Run(inChan <-chan interface{}) (<-chan interface{}, <-c
 
 type BurstSmoother struct {
 	LeastSampleInterval time.Duration
+	InC                 chan interface{}
+	OutC                chan interface{}
 }
 
-func (bf *BurstSmoother) Run(inChan <-chan interface{}) <-chan interface{} {
-	outChan := make(chan interface{})
+func NewBurstSmoother(leastSampleInterval time.Duration) *BurstSmoother {
+	return &BurstSmoother{
+		LeastSampleInterval: leastSampleInterval,
+		InC:                 make(chan interface{}),
+		OutC:                make(chan interface{}),
+	}
+}
 
+func (bf *BurstSmoother) GetInput() chan<- interface{} {
+	return bf.InC
+}
+
+func (bf *BurstSmoother) GetOutput() <-chan interface{} {
+	return bf.OutC
+}
+
+func (bf *BurstSmoother) Run() <-chan interface{} {
 	go func() {
-		defer close(outChan)
-		for item := range inChan {
+		defer close(bf.OutC)
+		for item := range bf.InC {
 			time.Sleep(bf.LeastSampleInterval)
-			outChan <- item
+			bf.OutC <- item
 		}
 	}()
 
-	return outChan
+	return bf.OutC
 }

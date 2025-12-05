@@ -28,14 +28,17 @@ func main() {
 	c2 := generateData(N, "B")
 	c3 := generateData(N, "C")
 
-	smootherCfg := pkgratelimit.BurstSmoother{
-		LeastSampleInterval: 10 * time.Millisecond,
-	}
 	throttleCfg := pkgratelimit.TokenBasedThrottleConfig{
 		RefreshInterval:       1 * time.Second,
 		TokenQuotaPerInterval: 10,
 	}
-	mimoSched := pkgratelimit.NewMIMOScheduler(throttleCfg, smootherCfg)
+	mimoCfg := pkgratelimit.MIMOSchedConfig{
+		Middlewares: []pkgratelimit.SISOPipe{
+			pkgratelimit.NewTokenBasedThrottle(throttleCfg),
+			pkgratelimit.NewBurstSmoother(10 * time.Millisecond),
+		},
+	}
+	mimoSched := pkgratelimit.NewMIMOScheduler(&mimoCfg)
 	ctx := context.Background()
 	ctx, cancelSched := context.WithCancel(ctx)
 	defer cancelSched()
