@@ -1,9 +1,7 @@
 package throttle
 
 // MIMO (Multiple-Input, Multiple-Output) Throttles
-// An MIMO remuxer/scheduler can be viewed as a combination of an MISO scheduler and a SIMO demuxer
-// Here is a toy impl of fake round-robin scheduler, picking ready elements from multiple inputs
-// in a not that fair manner.
+// An MIMO remuxer/scheduler can be viewed as a combination of an MISO scheduler and a SIMO demuxer, perhaps plus some middlewares.
 
 import (
 	"context"

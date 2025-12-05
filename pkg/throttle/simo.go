@@ -32,8 +32,8 @@ type LabeledPacketBinding struct {
 type SIMOEventType string
 
 const (
-	SIMOEVNewOutputAdded  SIMOEventType = "new_output"
-	SIMOEVOutputRemoved   SIMOEventType = "output_removed"
+	SIMOEVNewOutputAdded SIMOEventType = "new_output"
+	SIMOEVOutputRemoved  SIMOEventType = "output_removed"
 )
 
 type SIMOEventObject struct {
@@ -49,9 +49,9 @@ type SIMOEventObject struct {
 
 // Multiple inputs, multiple outputs scheduler
 type SIMOScheduler struct {
-	config *SIMOSchedConfig
+	config         *SIMOSchedConfig
 	outputBindings sync.Map
-	InC chan interface{}
+	InC            chan interface{}
 }
 
 type SIMOSchedConfig struct {
@@ -84,36 +84,12 @@ func (simoSched *SIMOScheduler) RemoveOutput(labelBindingName string) error {
 	return simoSched.config.Demuxer.RemoveOutput(labelBindingName)
 }
 
-func (evObj *SIMOEventObject) handleNewOutputAdded(sched *SIMOScheduler) error {
-	binding := evObj.Payload.(*LabeledPacketBinding)
-	sched.outputBindings.Store(binding.BindingName, *binding)
-	return nil
-}
-
-func (evObj *SIMOEventObject) handleOutputRemoved(sched *SIMOScheduler) error {
-	bindingName := evObj.Payload.(string)
-	sched.outputBindings.Delete(bindingName)
-	return nil
-}
-
-func (simoSched *SIMOScheduler) handleEvent(evObj *SIMOEventObject) error {
-	switch evObj.Type {
-	case SIMOEVNewOutputAdded:
-		return evObj.handleNewOutputAdded(simoSched)
-	case SIMOEVOutputRemoved:
-		return evObj.handleOutputRemoved(simoSched)
-	default:
-		panic(fmt.Sprintf("unknown event type: %s", evObj.Type))
-	}
-}
-
 func (SIMOSched *SIMOScheduler) GetInput() chan<- interface{} {
 	return SIMOSched.InC
 }
 
 // Run executes the scheduler, setting up the entire pipeline.
 func (simoSched *SIMOScheduler) Run(ctx context.Context) {
-
 
 	go func() {
 

@@ -2,6 +2,9 @@ package throttle
 
 // MISO (Multiple-Input, Single-Output) muxer/scheduler
 
+// Here is a toy impl of fake round-robin scheduler, picking ready elements from multiple inputs
+// in a not that fair manner.
+
 import (
 	"context"
 	"fmt"
