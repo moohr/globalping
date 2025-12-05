@@ -7,14 +7,6 @@ import (
 	"context"
 )
 
-// MIMOInputSourceNode represents a node in the single-linked list of input channels.
-type MIMOInputSourceNode struct {
-	InputChan chan interface{}
-	Label     string
-	NextNode  *MIMOInputSourceNode
-	Dead      bool
-}
-
 // Multiple inputs, multiple outputs scheduler
 type MIMOScheduler struct {
 	config *MIMOSchedConfig
