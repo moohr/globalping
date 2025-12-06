@@ -17,66 +17,56 @@ type Node struct {
 	Id            int
 	Name          string
 	InC           chan interface{}
-	DataSource    <-chan interface{}
 	Dead          bool
 	ItemsCopied   int
 	ScheduledTime float64
 	LifeSpan      float64
+	staging       chan interface{}
 }
 
 func (node *Node) PrintWithIdx(idx int) {
 	fmt.Printf("[%d] ID=%d, Name=%s, ScheduledTime=%f, LifeSpan=%f\n", idx, node.Id, node.Name, node.ScheduledTime, node.LifeSpan)
 }
 
-const (
-	CMD_ADD   = "add"
-	CMD_RUN   = "run"
-	CMD_SKIP  = "skip"
-	CMD_DEL   = "del"
-	CMD_EXIT  = "exit"
-	CMD_PRINT = "print"
-)
-
 const defaultChannelBufferSize = 1024
 
-func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject) {
-	dataSource := nd.DataSource
+func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, ioTodoQueue *btree.BTree) {
 	go func() {
-		serviceChannelClosed := false
-		defer func() {
-			if !serviceChannelClosed {
-				go func() {
+		nd.staging = make(chan interface{}, defaultChannelBufferSize)
+		defer close(nd.staging)
+		defer log.Printf("node %s is drained", nd.Name)
+
+		itemsLoaded := 0
+		for {
+			select {
+			case item, ok := <-nd.InC:
+				log.Printf("load into staging: %v", item)
+				if !ok {
+					return
+				}
+				nd.staging <- item
+				itemsLoaded++
+			default:
+				if itemsLoaded > 0 {
+					itemsLoaded = 0
+
+					ioTodoQueue.ReplaceOrInsert(nd)
+
 					evRequestCh, ok := <-evCh
 					if !ok {
-						// service channel was really closed
+						// service channel was closed
 						return
 					}
-
 					evObj := EVObject{
-						Type:    EVNodeDrained,
-						Payload: nd,
+						Type:    EVNodeDataAvailable,
+						Payload: nil,
 						Result:  make(chan error),
 					}
 					evRequestCh <- evObj
 					<-evObj.Result
-				}()
+				}
 			}
-		}()
 
-		for range dataSource {
-			evRequestCh, ok := <-evCh
-			if !ok {
-				// service channel was closed
-				serviceChannelClosed = true
-				return
-			}
-			evObj := EVObject{
-				Type:    EVNodeDataAvailable,
-				Payload: nil,
-				Result:  make(chan error),
-			}
-			evRequestCh <- evObj
-			<-evObj.Result
 		}
 	}()
 }
@@ -101,10 +91,8 @@ func (n *Node) Less(item btree.Item) bool {
 type EVType string
 
 const (
-	EVNodeDrained       EVType = "node_drained"
 	EVNodeDataAvailable EVType = "node_data_available"
 	EVNodeAdded         EVType = "node_added"
-	EVPrintNodes        EVType = "print_nodes"
 )
 
 type EVObject struct {
@@ -119,13 +107,16 @@ func (nd *Node) Run(outC chan<- interface{}) <-chan interface{} {
 	headNode := nd
 	go func() {
 		defer close(runCh)
+		defer log.Println("runCh closed", "node", headNode.Name)
+
 		timeout := time.After(defaultTimeSlice)
 
 		for {
 			select {
 			case <-timeout:
+				log.Println("timeout", "node", headNode.Name)
 				return
-			case item, ok := <-headNode.InC:
+			case item, ok := <-headNode.staging:
 				if !ok {
 					headNode.Dead = true
 					return
@@ -140,7 +131,7 @@ func (nd *Node) Run(outC chan<- interface{}) <-chan interface{} {
 	return runCh
 }
 
-func anonymousSource(ctx context.Context, content string) <-chan interface{} {
+func anonymousSource(ctx context.Context, content string) chan interface{} {
 	outC := make(chan interface{})
 	go func() {
 		for {
@@ -163,26 +154,15 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	mainQueue := btree.New(2)
-	alternateQueue := btree.New(2)
 
 	outC := make(chan interface{})
 	evCh := make(chan chan EVObject)
 
-	print := func(queue *btree.BTree, name string) {
-		fmt.Println("BEGIN------ ", name, " -----------")
-		var rank *int = new(int)
-		*rank = 0
-		iteratorFn := func(item btree.Item) bool {
-			node := item.(*Node)
-			node.PrintWithIdx(*rank)
-			*rank = *rank + 1
-			return true
-		}
-		queue.Ascend(iteratorFn)
-		fmt.Println("END--------- ", name, " -------------")
-	}
+	allNodes := make(map[int]*Node)
 
 	go func() {
+		log.Println("evCenter started")
+
 		defer close(evCh)
 
 		for {
@@ -193,58 +173,40 @@ func main() {
 			case evCh <- evRequestCh:
 				evRequest := <-evRequestCh
 				switch evRequest.Type {
-				case EVPrintNodes:
-					print(mainQueue, "main")
-					print(alternateQueue, "alternate")
 				case EVNodeAdded:
 					newNode, ok := evRequest.Payload.(*Node)
 					if !ok {
 						panic("unexpected node type")
 					}
-					// new nodes are always added to the alternate queue
-					alternateQueue.ReplaceOrInsert(newNode)
-					newNode.RegisterDataEvent(evCh)
-				case EVNodeDrained:
-					nodeItem, ok := evRequest.Payload.(*Node)
-					if !ok {
-						panic("unexpected node type")
-					}
-					if mainQueue.Delete(nodeItem) == nil {
-						panic("removing node does not exist")
-					}
+					newNode.RegisterDataEvent(evCh, mainQueue)
 				case EVNodeDataAvailable:
-
-					headNodeItem := mainQueue.DeleteMin()
-					if headNodeItem == nil {
-						if alternateQueue.Len() == 0 {
-							fmt.Println("no node to run")
-							continue
+					for {
+						headNodeItem := mainQueue.DeleteMin()
+						if headNodeItem == nil {
+							panic("head node item shouldn't be nil")
 						}
-						mainQueue, alternateQueue = alternateQueue, mainQueue
-						headNodeItem = mainQueue.DeleteMin()
-					}
 
-					if headNodeItem == nil {
-						panic("head node item shouldn't be nil")
-					}
+						headNode, ok := headNodeItem.(*Node)
+						if !ok {
+							panic("unexpected node type")
+						}
 
-					headNode, ok := headNodeItem.(*Node)
-					if !ok {
-						panic("unexpected node type")
-					}
-
-					nrCopiedPreRun := headNode.ItemsCopied
-					<-headNode.Run(outC)
-					nrCopiedPostRun := headNode.ItemsCopied
-					scheduledTimeDelta := 1.0 / float64(mainQueue.Len()+alternateQueue.Len())
-					if nrCopiedPostRun == nrCopiedPreRun {
-						// extra penalty for idling
+						nrCopiedPreRun := headNode.ItemsCopied
+						<-headNode.Run(outC)
+						nrCopiedPostRun := headNode.ItemsCopied
+						scheduledTimeDelta := 1.0 / math.Max(1.0, float64(len(allNodes)))
+						if nrCopiedPostRun == nrCopiedPreRun {
+							// extra penalty for idling
+							headNode.ScheduledTime = headNode.ScheduledTime + scheduledTimeDelta
+						}
 						headNode.ScheduledTime = headNode.ScheduledTime + scheduledTimeDelta
-					}
-					headNode.ScheduledTime = headNode.ScheduledTime + scheduledTimeDelta
-					headNode.LifeSpan = headNode.LifeSpan + 1.0
+						headNode.LifeSpan = headNode.LifeSpan + 1.0
 
-					alternateQueue.ReplaceOrInsert(headNode)
+						if headNode.Dead {
+							delete(allNodes, headNode.Id)
+						}
+					}
+
 				default:
 					panic(fmt.Sprintf("unknown event type: %s", evRequest.Type))
 				}
@@ -254,14 +216,17 @@ func main() {
 		}
 	}()
 
-	add := func() *Node {
-		newNodeId := mainQueue.Len() + alternateQueue.Len()
-		return &Node{
+	add := func(name string) *Node {
+		newNodeId := len(allNodes)
+		node := &Node{
 			Id:            newNodeId,
+			Name:          name,
 			ScheduledTime: 0.0,
 			LifeSpan:      1.0,
-			InC:           make(chan interface{}, defaultChannelBufferSize),
+			InC:           anonymousSource(ctx, name),
 		}
+		allNodes[newNodeId] = node
+		return node
 	}
 
 	addToEvCenter := func(node *Node) {
@@ -283,6 +248,7 @@ func main() {
 		stat := make(map[string]int)
 		total := 0
 		for muxedItem := range outC {
+			fmt.Println("muxedItem: ", muxedItem)
 			stat[muxedItem.(string)]++
 			total++
 			if total%1000 == 0 {
@@ -294,17 +260,12 @@ func main() {
 		}
 	}()
 
-	sourceA := anonymousSource(ctx, "A")
-	sourceB := anonymousSource(ctx, "B")
-	sourceC := anonymousSource(ctx, "C")
+	log.Println("Creating sources")
+	nodeA := add("A")
+	nodeB := add("B")
+	nodeC := add("C")
 
-	nodeA := add()
-	nodeA.DataSource = sourceA
-	nodeB := add()
-	nodeB.DataSource = sourceB
-	nodeC := add()
-	nodeC.DataSource = sourceC
-
+	log.Println("adding nodes to evCenter")
 	addToEvCenter(nodeA)
 	log.Println("nodeA added to evCenter")
 	addToEvCenter(nodeB)
