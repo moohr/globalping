@@ -7,7 +7,6 @@ import (
 	"math"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
@@ -24,7 +23,6 @@ type Node struct {
 	Name          string
 	InC           chan interface{}
 	ScheduledTime float64
-	Mux           sync.Mutex
 	queuePending  chan interface{}
 }
 
@@ -246,7 +244,6 @@ func main() {
 			Id:   newNodeId,
 			Name: name,
 			InC:  anonymousSource(ctx, name),
-			Mux:  sync.Mutex{},
 
 			// the buffer size of this channel `queuePending` must be 1,
 			// to ensure that, for every moment, at most 1 node instance is in-queue
