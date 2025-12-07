@@ -37,6 +37,7 @@ func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, nodeQueue *btree.BT
 		defer close(toBeSendFragments)
 		for dataBlob := range toBeSendFragments {
 			for dataBlob.Remaining > 0 {
+				log.Printf("node %s is sending data blob, remaining %d items", nd.Name, dataBlob.Remaining)
 				evSubCh := <-evCh
 				nd.queuePending <- struct{}{}
 				nodeQueue.ReplaceOrInsert(nd)
@@ -54,15 +55,17 @@ func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, nodeQueue *btree.BT
 	}()
 
 	go func() {
+		itemsLoaded := 0
 		defer log.Printf("node %s is drained", nd.Name)
 
 		staging := make(chan interface{}, defaultChannelBufferSize)
-		itemsLoaded := 0
 		for item := range nd.InC {
 			select {
 			case staging <- item:
 				itemsLoaded++
+				log.Printf("node %s loaded %d items", nd.Name, itemsLoaded)
 			default:
+				log.Printf("node %s is full, flushing %d items (default case)", nd.Name, itemsLoaded)
 				toBeSendFragments <- &DataBlob{
 					BufferedChan: staging,
 					Size:         itemsLoaded,
@@ -74,6 +77,7 @@ func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, nodeQueue *btree.BT
 		}
 
 		if itemsLoaded > 0 {
+			log.Printf("node %s is draining, flushing %d items (after for loop)", nd.Name, itemsLoaded)
 			// flush the remaining items in buffer
 			toBeSendFragments <- &DataBlob{
 				BufferedChan: staging,
@@ -236,12 +240,12 @@ func main() {
 		<-evObj.Result
 	}
 
-	aLim := 8000000
-	bLim := 16000000
-	cLim := 24000000
-	dLim := 32000000
-	eLim := 40000000
-	fLim := 48000000
+	aLim := 80
+	bLim := 160
+	cLim := 240
+	dLim := 320
+	eLim := 400
+	fLim := 480
 
 	go func() {
 		log.Println("evCenter started")
@@ -309,6 +313,8 @@ func main() {
 						panic("payload of event is not a of type struct DataBlob")
 					}
 
+					log.Printf("node %s event %s, cap: %d, remain: %d", nodeObject.Name, evRequest.Type, dataBlob.Size, dataBlob.Remaining)
+
 					itemsCopied := <-nodeObject.Run(outC, nodeObject, dataBlob)
 					nodeObject.ScheduledTime += 1.0
 					nodeObject.NumItemsCopied[0] = nodeObject.NumItemsCopied[1]
@@ -335,7 +341,7 @@ func main() {
 		for muxedItem := range outC {
 			stat[muxedItem.(string)]++
 			total++
-			if total%1000 == 0 {
+			if total%10 == 0 {
 				for k, v := range stat {
 					fmt.Printf("%s: %d, %.2f%%\n", k, v, 100*float64(v)/float64(total))
 				}
