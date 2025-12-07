@@ -14,12 +14,12 @@ import (
 )
 
 type Node struct {
-	Id             int
-	Name           string
-	InC            chan interface{}
-	ScheduledTime  float64
-	queuePending   chan interface{}
-	NumItemsCopied []int
+	Id              int
+	Name            string
+	InC             chan interface{}
+	ScheduledTime   float64
+	queuePending    chan interface{}
+	NumItemsCopied  []int
 	CurrentDataBlob *DataBlob
 }
 
@@ -33,9 +33,8 @@ const defaultChannelBufferSize = 1024
 
 func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, nodeQueue *btree.BTree) {
 	toBeSendFragments := make(chan *DataBlob)
-	taskSeq := 0
-	go func() {
 
+	go func() {
 		for dataBlob := range toBeSendFragments {
 			for dataBlob.Remaining > 0 {
 				evSubCh := <-evCh
@@ -49,7 +48,7 @@ func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, nodeQueue *btree.BT
 
 				evSubCh <- evObj
 				<-evObj.Result
-				taskSeq++
+
 				<-nd.queuePending
 			}
 		}
@@ -59,12 +58,29 @@ func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, nodeQueue *btree.BT
 		itemsLoaded := 0
 		defer log.Printf("node %s is drained", nd.Name)
 
+		// todo: figure out why it just won't reach here
+		defer panic("test not reach here")
+
+		totalItemsProcessed := 0
+
 		staging := make(chan interface{}, defaultChannelBufferSize)
+		temporaryBuf := make([]interface{}, 0)
 		for item := range nd.InC {
+			totalItemsProcessed++
+
+			if len(temporaryBuf) > 0 {
+				fmt.Println("flushing temporaryBuf: ", len(temporaryBuf))
+				for _, item := range temporaryBuf {
+					staging <- item
+					itemsLoaded++
+				}
+				temporaryBuf = make([]interface{}, 0)
+			}
 			select {
 			case staging <- item:
 				itemsLoaded++
 			default:
+				temporaryBuf = append(temporaryBuf, item)
 				toBeSendFragments <- &DataBlob{
 					BufferedChan: staging,
 					Size:         itemsLoaded,
@@ -84,6 +100,8 @@ func (nd *Node) RegisterDataEvent(evCh <-chan chan EVObject, nodeQueue *btree.BT
 			}
 			itemsLoaded = 0
 		}
+
+		fmt.Println("total items processed: ", totalItemsProcessed)
 	}()
 }
 
@@ -150,8 +168,6 @@ func (nd *Node) Run(outC chan<- interface{}, nodeObject *Node) <-chan int {
 				outC <- item
 				*itemsCopied = *itemsCopied + 1
 				nodeObject.CurrentDataBlob.Remaining--
-			default:
-				return
 			}
 		}
 	}()
@@ -162,7 +178,6 @@ func anonymousSource(ctx context.Context, content string, limit *int) chan inter
 	outC := make(chan interface{})
 	numItemsCopied := 0
 	go func() {
-		defer close(outC)
 		for {
 			select {
 			case <-ctx.Done():
@@ -238,12 +253,7 @@ func main() {
 		<-evObj.Result
 	}
 
-	aLim := 8000000
-	bLim := 16000000
-	cLim := 24000000
-	dLim := 32000000
-	eLim := 40000000
-	fLim := 48000000
+	aLim := 80000
 
 	go func() {
 		log.Println("evCenter started")
@@ -260,31 +270,6 @@ func main() {
 				*numEventsPassed = *numEventsPassed + 1
 
 				log.Printf("Event %s, Generation: %d", evRequest.Type, *numEventsPassed)
-
-				if *numEventsPassed == 8000 {
-					go func() {
-						newNode := add("D", &dLim)
-						log.Printf("reached %d generations, adding new node %s", *numEventsPassed, newNode.Name)
-						addToEvCenter(newNode)
-					}()
-
-				}
-
-				if *numEventsPassed == 16000 {
-					go func() {
-						newNode := add("E", &eLim)
-						log.Printf("reached %d generations, adding new node %s", *numEventsPassed, newNode.Name)
-						addToEvCenter(newNode)
-					}()
-				}
-
-				if *numEventsPassed == 24000 {
-					go func() {
-						newNode := add("F", &fLim)
-						log.Printf("reached %d generations, adding new node %s", *numEventsPassed, newNode.Name)
-						addToEvCenter(newNode)
-					}()
-				}
 
 				switch evRequest.Type {
 				case EVNodeAdded:
@@ -315,8 +300,6 @@ func main() {
 					if !ok {
 						panic("head item in the queue is not a of type struct Node")
 					}
-					
-
 
 					itemsCopied := <-nodeObject.Run(outC, nodeObject)
 					nodeObject.ScheduledTime += 1.0
@@ -343,8 +326,7 @@ func main() {
 			ticker := time.NewTicker(1 * time.Second)
 			defer ticker.Stop()
 			for range ticker.C {
-				log.Printf("total muxed: %d", *total)
-
+				fmt.Println("Total: ", *total)
 			}
 		}()
 
@@ -356,17 +338,19 @@ func main() {
 					fmt.Printf("%s: %d, %.2f%%\n", k, v, 100*float64(v)/float64(*total))
 				}
 			}
+			if *total == aLim {
+				fmt.Println("Final statistics:")
+				for k, v := range stat {
+					fmt.Printf("%s: %d, %.2f%%\n", k, v, 100*float64(v)/float64(*total))
+				}
+			}
 		}
 
 	}()
 
 	nodeA := add("A", &aLim)
-	nodeB := add("B", &bLim)
-	nodeC := add("C", &cLim)
 
 	addToEvCenter(nodeA)
-	addToEvCenter(nodeB)
-	addToEvCenter(nodeC)
 
 	sig := <-sigs
 	fmt.Println("signal received: ", sig, " exitting...")
