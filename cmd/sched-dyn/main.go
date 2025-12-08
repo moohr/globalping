@@ -84,9 +84,9 @@ func main() {
 	var numEventsPassed *int = new(int)
 	*numEventsPassed = 0
 
-	aLim := 80000
-	bLim := 160000
-	cLim := 240000
+	aLim := 8000000
+	bLim := 16000000
+	cLim := 24000000
 
 	// consumer goroutine
 	go func() {
@@ -117,7 +117,7 @@ func main() {
 				fmt.Println("total: ", *total)
 			}
 
-			if *total == aLim+bLim+cLim {
+			if *total == aLim+bLim+cLim+aLim+aLim {
 				fmt.Println("Final statistics:")
 				for k, v := range stat {
 					fmt.Printf("%d: %d, %.2f%%\n", k, v, 100*float64(v)/float64(*total))
@@ -155,6 +155,19 @@ func main() {
 	opaqueNodeId = add(ctx, 3, &cLim, evCenter, sleepIntv)
 	log.Printf("node %v is added", opaqueNodeId)
 	wg.Add(1)
+
+	// some timer background task
+	go func() {
+		<-time.After(20 * time.Second)
+		opaqueNodeId := add(ctx, 4, &aLim, evCenter, sleepIntv)
+		log.Printf("node %v is added", opaqueNodeId)
+		wg.Add(1)
+
+		<-time.After(20 * time.Second)
+		opaqueNodeId = add(ctx, 5, &aLim, evCenter, sleepIntv)
+		log.Printf("node %v is added", opaqueNodeId)
+		wg.Add(1)
+	}()
 
 	sig := <-sigs
 	log.Println("signal received: ", sig, " exitting...")
