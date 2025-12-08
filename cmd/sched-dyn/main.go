@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
@@ -37,6 +36,18 @@ func anonymousSource(ctx context.Context, symbol int, limit *int) chan interface
 	return outC
 }
 
+func add(ctx context.Context, symbol int, limit *int, evCenter *pkgthrottle.TimeSlicedEVLoopSched) {
+
+	dataSource := anonymousSource(ctx, symbol, limit)
+
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	if err := evCenter.AddInput(ctx, dataSource); err != nil {
+		log.Fatalf("failed to add input to evCenter: %v", err)
+	}
+}
+
 func main() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
@@ -54,20 +65,8 @@ func main() {
 	var nodesCount *int = new(int)
 	*nodesCount = 0
 
-	nodesCountMutex := new(sync.Mutex)
-
 	var numEventsPassed *int = new(int)
 	*numEventsPassed = 0
-
-	add := func(symbol int, limit *int, evCenter *pkgthrottle.TimeSlicedEVLoopSched) {
-		nodesCountMutex.Lock()
-		defer nodesCountMutex.Unlock()
-
-		dataSource := anonymousSource(ctx, symbol, limit)
-		if err := evCenter.AddInput(dataSource); err != nil {
-			log.Fatalf("failed to add input to evCenter: %v", err)
-		}
-	}
 
 	aLim := 8000000
 	bLim := 16000000
@@ -104,9 +103,9 @@ func main() {
 
 	}()
 
-	add(1, &aLim, evCenter)
-	add(2, &bLim, evCenter)
-	add(3, &cLim, evCenter)
+	add(ctx, 1, &aLim, evCenter)
+	add(ctx, 2, &bLim, evCenter)
+	add(ctx, 3, &cLim, evCenter)
 
 	sig := <-sigs
 	fmt.Println("signal received: ", sig, " exitting...")

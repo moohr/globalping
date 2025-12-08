@@ -150,7 +150,7 @@ func (tsSched *TimeSlicedEVLoopSched) Run(ctx context.Context) chan error {
 	return errorChan
 }
 
-func (tsSched *TimeSlicedEVLoopSched) AddInput(inputChan <-chan interface{}) error {
+func (tsSched *TimeSlicedEVLoopSched) AddInput(ctx context.Context, inputChan <-chan interface{}) error {
 	evSubCh, ok := <-tsSched.evCh
 	if !ok {
 		return fmt.Errorf("ev channel is already closed")
@@ -163,7 +163,15 @@ func (tsSched *TimeSlicedEVLoopSched) AddInput(inputChan <-chan interface{}) err
 		Result:  make(chan error),
 	}
 	evSubCh <- evObj
-	return <-evObj.Result
+	select {
+	case err, ok := <-evObj.Result:
+		if !ok {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 type TSSchedSourceNode struct {
