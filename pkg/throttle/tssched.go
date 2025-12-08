@@ -193,7 +193,7 @@ func (tsSched *TimeSlicedEVLoopSched) Run(ctx context.Context) chan error {
 					inputChanSubmission.OpaqueId = newNodeId
 					tsSched.nodesAdded[newNodeId] = newNodeObject
 
-					newNodeObject.RegisterDataEvent(tsSched.evCh, tsSched.nodeQueue, tsSched.maximumChunkSize)
+					newNodeObject.RegisterDataEvent(tsSched.evCh, tsSched.nodeQueue, tsSched.maximumChunkSize, *tsSched.defaultTimeSlice)
 					evRequest.Result <- nil
 				case TSSchedEVNewDataTask:
 
@@ -301,6 +301,7 @@ func (nd *TSSchedSourceNode) RegisterDataEvent(
 	evCh <-chan chan TSSchedEVObject,
 	nodeQueue *btree.BTree,
 	maximumChunkSize int,
+	maximumTimeSlice time.Duration,
 ) {
 	toBeSendFragments := make(chan *TSSchedDataBlob)
 
@@ -330,9 +331,33 @@ func (nd *TSSchedSourceNode) RegisterDataEvent(
 
 		staging := make(chan interface{}, maximumChunkSize)
 		temporaryBuf := make([]interface{}, 0)
+
+		type lastItemWrapT struct {
+			data interface{}
+		}
+
+		doFlush := func(lastItem *lastItemWrapT) (newItemsLoaded int, newStagingBuf chan interface{}) {
+			newItemsLoaded = 0
+			newStagingBuf = make(chan interface{}, maximumChunkSize)
+
+			if lastItem != nil {
+				temporaryBuf = append(temporaryBuf, lastItem.data)
+			}
+
+			toBeSendFragments <- &TSSchedDataBlob{
+				BufferedChan: staging,
+				Size:         itemsLoaded,
+				Remaining:    itemsLoaded,
+			}
+
+			return newItemsLoaded, newStagingBuf
+		}
+
+		sliceTicker := time.NewTicker(maximumTimeSlice)
+		defer sliceTicker.Stop()
+
 		for item := range nd.InC {
 			totalItemsProcessed++
-
 			if len(temporaryBuf) > 0 {
 				for _, item := range temporaryBuf {
 					staging <- item
@@ -340,29 +365,22 @@ func (nd *TSSchedSourceNode) RegisterDataEvent(
 				}
 				temporaryBuf = make([]interface{}, 0)
 			}
+
 			select {
 			case staging <- item:
 				itemsLoaded++
+			case <-sliceTicker.C:
+				// flush because run out of time slice
+				itemsLoaded, staging = doFlush(&lastItemWrapT{data: item})
 			default:
-				temporaryBuf = append(temporaryBuf, item)
-				toBeSendFragments <- &TSSchedDataBlob{
-					BufferedChan: staging,
-					Size:         itemsLoaded,
-					Remaining:    itemsLoaded,
-				}
-				itemsLoaded = 0
-				staging = make(chan interface{}, maximumChunkSize)
+				// flush because the staging buffer is full-filled
+				itemsLoaded, staging = doFlush(&lastItemWrapT{data: item})
 			}
 		}
 
 		if itemsLoaded > 0 {
-			// flush the remaining items in buffer
-			toBeSendFragments <- &TSSchedDataBlob{
-				BufferedChan: staging,
-				Size:         itemsLoaded,
-				Remaining:    itemsLoaded,
-			}
-			itemsLoaded = 0
+			// flush because the source is drained
+			itemsLoaded, staging = doFlush(nil)
 		}
 
 		go func() {

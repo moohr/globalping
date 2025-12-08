@@ -13,23 +13,36 @@ import (
 	pkgthrottle "example.com/rbmq-demo/pkg/throttle"
 )
 
-func anonymousSource(ctx context.Context, symbol int, limit *int) chan interface{} {
+type MockPacket struct {
+	Symbol int
+	Seq    int
+}
+
+func (mp MockPacket) String() string {
+	return fmt.Sprintf("{symbol: %d, seq: %d}", mp.Symbol, mp.Seq)
+}
+
+func anonymousSource(ctx context.Context, symbol int, limit *int, interval *time.Duration) chan interface{} {
 	outC := make(chan interface{})
 	numItemsCopied := 0
 	go func() {
+
 		// close source channel to signal the down stream consumers
 		defer close(outC)
+		defer fmt.Printf("source %d is closed\n", symbol)
 
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			default:
-				outC <- symbol
+				outC <- MockPacket{Symbol: symbol, Seq: numItemsCopied}
 				numItemsCopied++
 				if limit != nil && *limit > 0 && numItemsCopied >= *limit {
-					log.Printf("source %d reached limit %d, stopping", symbol, *limit)
 					return
+				}
+				if interval != nil {
+					time.Sleep(*interval)
 				}
 			}
 		}
@@ -37,9 +50,9 @@ func anonymousSource(ctx context.Context, symbol int, limit *int) chan interface
 	return outC
 }
 
-func add(ctx context.Context, symbol int, limit *int, evCenter *pkgthrottle.TimeSlicedEVLoopSched) interface{} {
+func add(ctx context.Context, symbol int, limit *int, evCenter *pkgthrottle.TimeSlicedEVLoopSched, interval *time.Duration) interface{} {
 
-	dataSource := anonymousSource(ctx, symbol, limit)
+	dataSource := anonymousSource(ctx, symbol, limit, interval)
 
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -71,9 +84,9 @@ func main() {
 	var numEventsPassed *int = new(int)
 	*numEventsPassed = 0
 
-	aLim := 8000
-	bLim := 16000
-	cLim := 24000
+	aLim := 80
+	bLim := 160
+	cLim := 240
 
 	// consumer goroutine
 	go func() {
@@ -88,13 +101,17 @@ func main() {
 			}
 		}()
 
-		for muxedItem := range outC {
-			stat[muxedItem.(int)]++
+		for muxedItemRaw := range outC {
+			muxedItem, ok := muxedItemRaw.(MockPacket)
+			if !ok {
+				panic("unexpected item type, it's not of a type of MockPacket")
+			}
+
+			stat[muxedItem.Symbol]++
 			*total = *total + 1
-			if *total%1000 == 0 {
-				for k, v := range stat {
-					fmt.Printf("%d: %d, %.2f%%\n", k, v, 100*float64(v)/float64(*total))
-				}
+			fmt.Printf("output: %v\n", muxedItem.String())
+			for k, v := range stat {
+				fmt.Printf("%d: %d, %.2f%%\n", k, v, 100*float64(v)/float64(*total))
 			}
 			if *total == aLim+bLim+cLim {
 				fmt.Println("Final statistics:")
@@ -122,15 +139,16 @@ func main() {
 		return nil
 	})
 
-	opaqueNodeId := add(ctx, 1, &aLim, evCenter)
+	sleepIntv := 500 * time.Millisecond
+	opaqueNodeId := add(ctx, 1, &aLim, evCenter, &sleepIntv)
 	log.Printf("node %v is added", opaqueNodeId)
 	wg.Add(1)
 
-	opaqueNodeId = add(ctx, 2, &bLim, evCenter)
+	opaqueNodeId = add(ctx, 2, &bLim, evCenter, &sleepIntv)
 	log.Printf("node %v is added", opaqueNodeId)
 	wg.Add(1)
 
-	opaqueNodeId = add(ctx, 3, &cLim, evCenter)
+	opaqueNodeId = add(ctx, 3, &cLim, evCenter, &sleepIntv)
 	log.Printf("node %v is added", opaqueNodeId)
 	wg.Add(1)
 
