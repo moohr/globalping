@@ -158,8 +158,6 @@ func (tsSched *TimeSlicedEVLoopSched) Run(ctx context.Context) chan error {
 				evRequest := <-evRequestCh
 				*numEventsPassed = *numEventsPassed + 1
 
-				log.Printf("Event %s, Generation: %d", evRequest.Type, *numEventsPassed)
-
 				switch evRequest.Type {
 				case TSSchedEVNewHook:
 					evPayloadHook, ok := evRequest.Payload.(TSSchedCustomEVHandlerSubmission)
@@ -306,8 +304,6 @@ func (blob *TSSchedDataBlob) CopyTo(dst chan<- interface{}, maximumTimeSlice tim
 			return numItemsCopied
 		case dst <- blob.Chunk[blob.NextRead+numItemsCopied]:
 			numItemsCopied++
-		default:
-			return numItemsCopied
 		}
 	}
 	return numItemsCopied

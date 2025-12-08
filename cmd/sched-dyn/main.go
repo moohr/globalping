@@ -84,9 +84,9 @@ func main() {
 	var numEventsPassed *int = new(int)
 	*numEventsPassed = 0
 
-	aLim := 80
-	bLim := 160
-	cLim := 240
+	aLim := 80000
+	bLim := 160000
+	cLim := 240000
 
 	// consumer goroutine
 	go func() {
@@ -109,10 +109,14 @@ func main() {
 
 			stat[muxedItem.Symbol]++
 			*total = *total + 1
-			fmt.Printf("output: %v\n", muxedItem.String())
-			for k, v := range stat {
-				fmt.Printf("%d: %d, %.2f%%\n", k, v, 100*float64(v)/float64(*total))
+			if *total%1000 == 0 {
+				fmt.Println("Current statistics:")
+				for k, v := range stat {
+					fmt.Printf("%d: %d, %.2f%%\n", k, v, 100*float64(v)/float64(*total))
+				}
+				fmt.Println("total: ", *total)
 			}
+
 			if *total == aLim+bLim+cLim {
 				fmt.Println("Final statistics:")
 				for k, v := range stat {
@@ -139,16 +143,16 @@ func main() {
 		return nil
 	})
 
-	sleepIntv := 500 * time.Millisecond
-	opaqueNodeId := add(ctx, 1, &aLim, evCenter, &sleepIntv)
+	var sleepIntv *time.Duration = nil
+	opaqueNodeId := add(ctx, 1, &aLim, evCenter, sleepIntv)
 	log.Printf("node %v is added", opaqueNodeId)
 	wg.Add(1)
 
-	opaqueNodeId = add(ctx, 2, &bLim, evCenter, &sleepIntv)
+	opaqueNodeId = add(ctx, 2, &bLim, evCenter, sleepIntv)
 	log.Printf("node %v is added", opaqueNodeId)
 	wg.Add(1)
 
-	opaqueNodeId = add(ctx, 3, &cLim, evCenter, &sleepIntv)
+	opaqueNodeId = add(ctx, 3, &cLim, evCenter, sleepIntv)
 	log.Printf("node %v is added", opaqueNodeId)
 	wg.Add(1)
 
