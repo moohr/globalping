@@ -66,7 +66,7 @@ func (hub *SharedThrottleHub) Run(ctx context.Context) {
 // Note:
 // inChan: user sends, we read
 // outChan: we send, user reads
-func (hub *SharedThrottleHub) CreateProxy(inChan <-chan interface{}) (outChan chan<- interface{}, err error) {
+func (hub *SharedThrottleHub) CreateProxy(inChan <-chan interface{}) (outChan chan interface{}, err error) {
 	requestCh, ok := <-hub.serviceChan
 	if !ok {
 		// the hub is already shutdown
@@ -126,9 +126,16 @@ func (hub *SharedThrottleHub) CreateProxy(inChan <-chan interface{}) (outChan ch
 		// it can be guaranteed that the internal queue of the sched is fully emptied,
 		// so it is the perfect time to close the output channel
 		hub.tsSched.RegisterCustomEVHandler(ctx, TSSchedEVNodeDrained, "node_drained", func(evObj *TSSchedEVObject) error {
-			if evObj.Payload == nodeAddClosure.opaqueNodeId {
+
+			nodeId, ok := evObj.Payload.(int)
+			if !ok {
+				panic("unexpected ev payload, it's not of a type of int")
+			}
+
+			if nodeId == nodeAddClosure.opaqueNodeId {
 				close(outChan)
 			}
+
 			evObj.Result <- nil
 			return nil
 		})

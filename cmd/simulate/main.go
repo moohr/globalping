@@ -2,148 +2,123 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	pkgthrottle "example.com/rbmq-demo/pkg/throttle"
 )
 
-func main() {
-	throttleConfig := pkgthrottle.TokenBasedThrottleConfig{
-		RefreshInterval:       1 * time.Second,
-		TokenQuotaPerInterval: 20,
-	}
-	smootherConfig := pkgthrottle.BurstSmoother{
-		LeastSampleInterval: 100 * time.Millisecond,
-	}
-	mimoScheduler := pkgthrottle.NewMIMOScheduler(throttleConfig, smootherConfig)
+func generateData(N int, prefix string) chan interface{} {
+	dataChan := make(chan interface{})
+	go func() {
+		log.Printf("[DBG] generateData %s started", prefix)
+		defer close(dataChan)
+		defer log.Printf("[DBG] generateData %s closed", prefix)
+		for i := 0; i < N; i++ {
+			dataChan <- fmt.Sprintf("%s%03d", prefix, i)
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+	return dataChan
+}
 
-	icmpHub := pkgthrottle.NewICMPTransceiveHub(&pkgthrottle.SharedThrottleHubConfig{
-		MIMOScheduler: mimoScheduler,
-	})
-	ctx := context.TODO()
-	ctx, cancel := context.WithCancel(ctx)
+func main() {
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	mimoScheduler.Run(ctx)
-
-	icmpHub.Run(ctx)
-
-	hubProxy1 := icmpHub.GetProxy()
-	if hubProxy1 == nil {
-		// the hub was shutdown pre-maturely
-		return
-	}
-	hubProxy2 := icmpHub.GetProxy()
-	if hubProxy2 == nil {
-		// the hub was shutdown pre-maturely
-		return
+	throttleConfig := pkgthrottle.TokenBasedThrottleConfig{
+		RefreshInterval:       1 * time.Second,
+		TokenQuotaPerInterval: 5,
 	}
 
-	// fake death ping generator
+	tsSched, err := pkgthrottle.NewTimeSlicedEVLoopSched(&pkgthrottle.TimeSlicedEVLoopSchedConfig{})
+	if err != nil {
+		panic(fmt.Sprintf("failed to create time sliced event loop scheduler: %v", err))
+	}
 	go func() {
-		defer log.Println("[DBG] generator 1 closed")
-		defer hubProxy1.Close()
-
-		log.Println("[DBG] generator 1 started")
-
-		writeCh := hubProxy1.GetWriter()
-
-		// try generating ping requests at death speed
-		lastSeq := 0
-
-		for {
-			mockPacket := pkgthrottle.TestPacket{
-				Host: "www.example.com",
-				Type: pkgthrottle.TestPacketTypePing,
-				Seq:  lastSeq,
-				Id:   1,
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case writeCh <- mockPacket:
-				lastSeq++
-			}
+		err := <-tsSched.Run(ctx)
+		if err != nil {
+			log.Fatalf("failed to run time sliced event loop scheduler: %v", err)
 		}
 	}()
 
-	// second death ping generator
+	throttle := pkgthrottle.NewTokenBasedThrottle(throttleConfig)
+	throttle.Run()
+
+	smoother := pkgthrottle.NewBurstSmoother(333 * time.Millisecond)
+	smoother.Run()
+
+	hub := pkgthrottle.NewICMPTransceiveHub(&pkgthrottle.SharedThrottleHubConfig{
+		TSSched:  tsSched,
+		Throttle: throttle,
+		Smoother: smoother,
+	})
+
+	hub.Run(ctx)
+
+	source1 := generateData(20, "A")
+	source2 := generateData(20, "B")
+	source3 := generateData(20, "C")
+	source4 := generateData(20, "D")
+
+	exitWg := sync.WaitGroup{}
+	proxy1, err := hub.CreateProxy(source1)
+	if err != nil {
+		log.Fatalf("failed to create proxy: %v", err)
+	}
+	exitWg.Add(1)
+
+	proxy2, err := hub.CreateProxy(source2)
+	if err != nil {
+		log.Fatalf("failed to create proxy: %v", err)
+	}
+	exitWg.Add(1)
+
+	proxy3, err := hub.CreateProxy(source3)
+	if err != nil {
+		log.Fatalf("failed to create proxy: %v", err)
+	}
+	exitWg.Add(1)
+
+	proxy4, err := hub.CreateProxy(source4)
+	if err != nil {
+		log.Fatalf("failed to create proxy: %v", err)
+	}
+	exitWg.Add(1)
+
 	go func() {
-		defer log.Println("[DBG] generator 2 closed")
-		defer hubProxy2.Close()
-
-		log.Println("[DBG] generator 2 started")
-		lastSeq := 0
-		writeCh := hubProxy2.GetWriter()
-
-		for {
-			mockPacket := pkgthrottle.TestPacket{
-				Host: "x.com",
-				Type: pkgthrottle.TestPacketTypePing,
-				Seq:  lastSeq,
-				Id:   1,
+		select {
+		case item, ok := <-proxy1:
+			if !ok {
+				exitWg.Done()
 			}
-			select {
-			case <-ctx.Done():
-				return
-			case writeCh <- mockPacket:
-				lastSeq++
+			fmt.Println("proxy1: ", item)
+		case item, ok := <-proxy2:
+			if !ok {
+				exitWg.Done()
 			}
+			fmt.Println("proxy2: ", item)
+		case item, ok := <-proxy3:
+			if !ok {
+				exitWg.Done()
+			}
+			fmt.Println("proxy3: ", item)
+		case item, ok := <-proxy4:
+			if !ok {
+				exitWg.Done()
+			}
+			fmt.Println("proxy4: ", item)
 		}
-
 	}()
 
-	// fake death pong receiver
-	go func() {
-		defer log.Println("[DBG] receiver 1 closed")
-		log.Println("[DBG] receiver 1 started")
-
-		speedMeter := pkgthrottle.SpeedMeasurer{
-			RefreshInterval: 250 * time.Millisecond,
-			MinTimeDelta:    250 * time.Millisecond,
-		}
-
-		readCh := hubProxy1.GetReader()
-		readCh, speed := speedMeter.Run(readCh)
-		go func() {
-			for speedRecord := range speed {
-				log.Printf("[DBG] receiver 1 Speed: %s", speedRecord.String())
-			}
-		}()
-		for pong := range readCh {
-			if pongPkt, ok := pong.(pkgthrottle.TestPacket); ok && pongPkt.Type == pkgthrottle.TestPacketTypePong {
-				// log.Printf("[DBG] receiver 1 Received pong: %+v", pongPkt)
-			}
-		}
-	}()
-
-	// fake death pong receiver
-	go func() {
-		defer log.Println("[DBG] receiver 2 closed")
-		log.Println("[DBG] receiver 2 started")
-
-		speedMeter := pkgthrottle.SpeedMeasurer{
-			RefreshInterval: 250 * time.Millisecond,
-			MinTimeDelta:    250 * time.Millisecond,
-		}
-
-		readCh := hubProxy2.GetReader()
-		readCh, speed := speedMeter.Run(readCh)
-		go func() {
-			for speedRecord := range speed {
-				log.Printf("[DBG] receiver 2 Speed: %s", speedRecord.String())
-			}
-		}()
-		for pong := range readCh {
-			if pongPkt, ok := pong.(pkgthrottle.TestPacket); ok && pongPkt.Type == pkgthrottle.TestPacketTypePong {
-				// log.Printf("[DBG] receiver 2 Received pong: %+v", pongPkt)
-			}
-		}
-	}()
+	log.Println("waiting for all proxies to be closed")
+	exitWg.Wait()
+	log.Println("all proxies are closed")
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
