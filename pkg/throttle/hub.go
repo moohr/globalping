@@ -98,21 +98,14 @@ func (hub *SharedThrottleHub) CreateProxy(inChan <-chan interface{}) (outChan ch
 	ctx := context.TODO()
 	wrappedInChan := make(chan interface{})
 
-	var nodeAddClosure *struct {
-		opaqueNodeId interface{}
-	} = new(struct {
-		opaqueNodeId interface{}
-	})
-
 	func() {
 		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 
-		opaqueId, err := hub.mimoSched.AddInput(ctx, wrappedInChan, labelKey)
+		_, err := hub.mimoSched.AddInput(ctx, wrappedInChan, labelKey)
 		if err != nil {
 			panic(fmt.Sprintf("failed to add input to mimo scheduler: %v", err))
 		}
-		nodeAddClosure.opaqueNodeId = opaqueId
 	}()
 
 	smoothedInChan := make(chan interface{})
@@ -123,24 +116,6 @@ func (hub *SharedThrottleHub) CreateProxy(inChan <-chan interface{}) (outChan ch
 
 	outChan = make(chan interface{})
 	go func() {
-		// according to the design of our MIMOSched, when the NodeDrained event is emitted,
-		// it can be guaranteed that the internal queue of the sched is fully emptied,
-		// so it is the perfect time to close the output channel
-		hub.tsSched.RegisterCustomEVHandler(ctx, TSSchedEVNodeDrained, "node_drained", func(evObj *TSSchedEVObject) error {
-
-			nodeId, ok := evObj.Payload.(int)
-			if !ok {
-				panic("unexpected ev payload, it's not of a type of int")
-			}
-
-			if nodeId == nodeAddClosure.opaqueNodeId {
-				close(outChan)
-			}
-
-			evObj.Result <- nil
-			return nil
-		})
-
 		for pktIn := range smoothedInChan {
 			outChan <- pktIn
 		}

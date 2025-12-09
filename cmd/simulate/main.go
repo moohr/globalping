@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
@@ -61,69 +60,57 @@ func main() {
 	source3 := generateData(20, "C")
 	source4 := generateData(20, "D")
 
-	exitWg := sync.WaitGroup{}
 	proxy1, err := hub.CreateProxy(source1)
 	if err != nil {
 		log.Fatalf("failed to create proxy: %v", err)
 	}
-	exitWg.Add(1)
 
 	proxy2, err := hub.CreateProxy(source2)
 	if err != nil {
 		log.Fatalf("failed to create proxy: %v", err)
 	}
-	exitWg.Add(1)
 
 	proxy3, err := hub.CreateProxy(source3)
 	if err != nil {
 		log.Fatalf("failed to create proxy: %v", err)
 	}
-	exitWg.Add(1)
 
 	proxy4, err := hub.CreateProxy(source4)
 	if err != nil {
 		log.Fatalf("failed to create proxy: %v", err)
 	}
-	exitWg.Add(1)
 
-	exitConsumer := make(chan interface{})
 	go func() {
 		for {
 			select {
 			case item, ok := <-proxy1:
 				if !ok {
-					exitWg.Done()
+					continue
 				}
 				fmt.Println("proxy1: ", item)
 			case item, ok := <-proxy2:
 				if !ok {
-					exitWg.Done()
+					continue
 				}
 				fmt.Println("proxy2: ", item)
 			case item, ok := <-proxy3:
 				if !ok {
-					exitWg.Done()
+					continue
 				}
 				fmt.Println("proxy3: ", item)
 			case item, ok := <-proxy4:
 				if !ok {
-					exitWg.Done()
+					continue
 				}
 				fmt.Println("proxy4: ", item)
-			case <-exitConsumer:
-				return
 			}
 		}
 	}()
 
-	log.Println("waiting for all proxies to be closed")
-	exitWg.Wait()
-	close(exitConsumer)
-	log.Println("all proxies are closed")
-
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigs
+	cancel()
 	log.Printf("Received signal: %v, exiting...", sig)
 
 	err = <-tsSchedRunerr
