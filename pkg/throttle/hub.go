@@ -8,7 +8,7 @@ package throttle
 import (
 	"context"
 	"fmt"
-	"math/rand"
+	"time"
 )
 
 type ServiceRequest struct {
@@ -16,59 +16,34 @@ type ServiceRequest struct {
 	Result chan error
 }
 
-type SharedThrottleProxy interface {
-	GetReader() <-chan interface{}
-	GetWriter() chan<- interface{}
-	Close()
-}
-
-type SharedThrottleProxyEntry struct {
-	// In: From Proxy user to the Hub, i.e. the proxy user writes, while the hub reads.
-	In chan interface{}
-
-	// Out: From the Hub to the Proxy user, i.e. the hub writes, while the proxy user reads.
-	Out chan interface{}
-
-	smoothedInChan chan interface{}
-	labelKey       string
-}
-
-type SharedThrottleProxyImpl struct {
-	id       int
-	hubEntry *SharedThrottleProxyEntry
-}
-
-func (proxy *SharedThrottleProxyImpl) GetReader() <-chan interface{} {
-	return proxy.hubEntry.Out
-}
-
-func (proxy *SharedThrottleProxyImpl) GetWriter() chan<- interface{} {
-	return proxy.hubEntry.In
-}
-
-func (proxy *SharedThrottleProxyImpl) Close() {
-	close(proxy.hubEntry.In)
-}
-
 type SharedThrottleHub struct {
-	proxies     map[int]*SharedThrottleProxyEntry
-	serviceChan chan chan ServiceRequest
-	mimoSched   *MIMOScheduler
+	serviceChan       chan chan ServiceRequest
+	numProxiesCreated int
+	tsSched           *TimeSlicedEVLoopSched
+	mimoSched         *MIMOScheduler
 }
 
 type SharedThrottleHubConfig struct {
-	MIMOScheduler *MIMOScheduler
+	TSSched  *TimeSlicedEVLoopSched
+	Throttle *TokenBasedThrottle
+	Smoother *BurstSmoother
 }
 
 func NewICMPTransceiveHub(config *SharedThrottleHubConfig) *SharedThrottleHub {
-	return &SharedThrottleHub{
-		proxies:     make(map[int]*SharedThrottleProxyEntry),
+	hub := &SharedThrottleHub{
 		serviceChan: make(chan chan ServiceRequest),
-		mimoSched:   config.MIMOScheduler,
 	}
+	mimoSched := NewMIMOScheduler(&MIMOSchedConfig{
+		Muxer:       config.TSSched,
+		Middlewares: []SISOPipe{config.Throttle, config.Smoother},
+	})
+	hub.mimoSched = mimoSched
+
+	return hub
 }
 
 func (hub *SharedThrottleHub) Run(ctx context.Context) {
+	hub.mimoSched.Run(ctx)
 
 	go func() {
 		defer close(hub.serviceChan)
@@ -88,55 +63,24 @@ func (hub *SharedThrottleHub) Run(ctx context.Context) {
 	}()
 }
 
-func (hub *SharedThrottleHub) generateNextProxyID() int {
-	result := -1
-	maxRetries := 10
-	for {
-		result = rand.Intn(0xffff) & 0xffff
-		if _, ok := hub.proxies[result]; !ok {
-			break
-		}
-		maxRetries--
-		if maxRetries < 0 {
-			panic("failed to generate next proxy ID")
-		}
-	}
-	return result
-}
-
-type TestPacketType string
-
-const (
-	TestPacketTypePing TestPacketType = "ping"
-	TestPacketTypePong TestPacketType = "pong"
-)
-
-type TestPacket struct {
-	Host string
-	Type TestPacketType
-	Seq  int
-	Id   int
-}
-
-func (hub *SharedThrottleHub) GetProxy() SharedThrottleProxy {
+// Note:
+// inChan: user sends, we read
+// outChan: we send, user reads
+func (hub *SharedThrottleHub) CreateProxy(inChan <-chan interface{}) (outChan chan<- interface{}, err error) {
 	requestCh, ok := <-hub.serviceChan
 	if !ok {
 		// the hub is already shutdown
-		return nil
+		return nil, fmt.Errorf("the hub is already shutdown")
 	}
 
 	defer close(requestCh)
 
 	var handlerId *int = new(int)
-	var hubEntry *SharedThrottleProxyEntry = &SharedThrottleProxyEntry{
-		In:  make(chan interface{}),
-		Out: make(chan interface{}),
-	}
 
 	fn := func(ctx context.Context) error {
-		newId := hub.generateNextProxyID()
-		hub.proxies[newId] = hubEntry
+		newId := hub.numProxiesCreated
 		*handlerId = newId
+		hub.numProxiesCreated++
 
 		return nil
 	}
@@ -147,39 +91,59 @@ func (hub *SharedThrottleHub) GetProxy() SharedThrottleProxy {
 	requestCh <- request
 	<-request.Result
 
-	hubEntry.labelKey = fmt.Sprintf("%d", *handlerId)
-	ctx := context.TODO()
-	_, err := hub.mimoSched.AddInput(ctx, hubEntry.In, hubEntry.labelKey)
-	if err != nil {
-		panic(fmt.Sprintf("failed to add input to mimo scheduler: %v", err))
-	}
+	labelKey := fmt.Sprintf("%d", *handlerId)
 
-	hubEntry.smoothedInChan = make(chan interface{})
-	err = hub.mimoSched.AddOutput(hubEntry.smoothedInChan, hubEntry.labelKey)
+	ctx := context.TODO()
+	wrappedInChan := make(chan interface{})
+
+	var nodeAddClosure *struct {
+		opaqueNodeId interface{}
+	} = new(struct {
+		opaqueNodeId interface{}
+	})
+
+	func() {
+		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+
+		opaqueId, err := hub.mimoSched.AddInput(ctx, wrappedInChan, labelKey)
+		if err != nil {
+			panic(fmt.Sprintf("failed to add input to mimo scheduler: %v", err))
+		}
+		nodeAddClosure.opaqueNodeId = opaqueId
+	}()
+
+	smoothedInChan := make(chan interface{})
+	err = hub.mimoSched.AddOutput(smoothedInChan, labelKey)
 	if err != nil {
 		panic(fmt.Sprintf("failed to add output to mimo scheduler: %v", err))
 	}
 
+	outChan = make(chan interface{})
 	go func() {
-		for pktIn := range hubEntry.smoothedInChan {
-			if testPkt, ok := pktIn.(TestPacket); ok && testPkt.Type == TestPacketTypePing {
-				pong := TestPacket{
-					Type: TestPacketTypePong,
-					Seq:  testPkt.Seq,
-					Id:   testPkt.Id,
-					Host: testPkt.Host,
-				}
-				hubEntry.Out <- pong
-				continue
-			}
 
-			// if have no idea what to do with the packet, leave it as is
-			hubEntry.Out <- pktIn
+		// according to the design of our MIMOSched, when the NodeDrained event is emitted,
+		// it can be guaranteed that the internal queue of the sched is fully emptied,
+		// so it is the perfect time to close the output channel
+		hub.tsSched.RegisterCustomEVHandler(ctx, TSSchedEVNodeDrained, "node_drained", func(evObj *TSSchedEVObject) error {
+			if evObj.Payload == nodeAddClosure.opaqueNodeId {
+				close(outChan)
+			}
+			evObj.Result <- nil
+			return nil
+		})
+
+		for pktIn := range smoothedInChan {
+			outChan <- pktIn
 		}
 	}()
 
-	return &SharedThrottleProxyImpl{
-		id:       *handlerId,
-		hubEntry: hubEntry,
-	}
+	go func() {
+		defer close(wrappedInChan)
+		for pktIn := range inChan {
+			wrappedInChan <- pktIn
+		}
+	}()
+
+	return outChan, nil
 }
