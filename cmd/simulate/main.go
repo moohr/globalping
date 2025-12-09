@@ -40,12 +40,7 @@ func main() {
 	if err != nil {
 		panic(fmt.Sprintf("failed to create time sliced event loop scheduler: %v", err))
 	}
-	go func() {
-		err := <-tsSched.Run(ctx)
-		if err != nil {
-			log.Fatalf("failed to run time sliced event loop scheduler: %v", err)
-		}
-	}()
+	tsSchedRunerr := tsSched.Run(ctx)
 
 	throttle := pkgthrottle.NewTokenBasedThrottle(throttleConfig)
 	throttle.Run()
@@ -91,37 +86,48 @@ func main() {
 	}
 	exitWg.Add(1)
 
+	exitConsumer := make(chan interface{})
 	go func() {
-		select {
-		case item, ok := <-proxy1:
-			if !ok {
-				exitWg.Done()
+		for {
+			select {
+			case item, ok := <-proxy1:
+				if !ok {
+					exitWg.Done()
+				}
+				fmt.Println("proxy1: ", item)
+			case item, ok := <-proxy2:
+				if !ok {
+					exitWg.Done()
+				}
+				fmt.Println("proxy2: ", item)
+			case item, ok := <-proxy3:
+				if !ok {
+					exitWg.Done()
+				}
+				fmt.Println("proxy3: ", item)
+			case item, ok := <-proxy4:
+				if !ok {
+					exitWg.Done()
+				}
+				fmt.Println("proxy4: ", item)
+			case <-exitConsumer:
+				return
 			}
-			fmt.Println("proxy1: ", item)
-		case item, ok := <-proxy2:
-			if !ok {
-				exitWg.Done()
-			}
-			fmt.Println("proxy2: ", item)
-		case item, ok := <-proxy3:
-			if !ok {
-				exitWg.Done()
-			}
-			fmt.Println("proxy3: ", item)
-		case item, ok := <-proxy4:
-			if !ok {
-				exitWg.Done()
-			}
-			fmt.Println("proxy4: ", item)
 		}
 	}()
 
 	log.Println("waiting for all proxies to be closed")
 	exitWg.Wait()
+	close(exitConsumer)
 	log.Println("all proxies are closed")
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigs
 	log.Printf("Received signal: %v, exiting...", sig)
+
+	err = <-tsSchedRunerr
+	if err != nil {
+		log.Fatalf("failed to run time sliced event loop scheduler: %v", err)
+	}
 }

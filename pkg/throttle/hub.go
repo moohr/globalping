@@ -31,7 +31,9 @@ type SharedThrottleHubConfig struct {
 
 func NewICMPTransceiveHub(config *SharedThrottleHubConfig) *SharedThrottleHub {
 	hub := &SharedThrottleHub{
-		serviceChan: make(chan chan ServiceRequest),
+		serviceChan:       make(chan chan ServiceRequest),
+		numProxiesCreated: 0,
+		tsSched:           config.TSSched,
 	}
 	mimoSched := NewMIMOScheduler(&MIMOSchedConfig{
 		Muxer:       config.TSSched,
@@ -121,7 +123,6 @@ func (hub *SharedThrottleHub) CreateProxy(inChan <-chan interface{}) (outChan ch
 
 	outChan = make(chan interface{})
 	go func() {
-
 		// according to the design of our MIMOSched, when the NodeDrained event is emitted,
 		// it can be guaranteed that the internal queue of the sched is fully emptied,
 		// so it is the perfect time to close the output channel
