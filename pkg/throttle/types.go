@@ -9,16 +9,11 @@ import (
 // However, since the type for packets we used here is interface{},
 // the user is free to design its own struct for wrapping packets to make them tagged.
 // For example, a packet of interface{} could be a MySimpleWrappedPacket{OriginPacket: xxx, Label: yyy}
+// As for the type of input and ouput items of the channels, they are the same, i.e. the type of output items
+// is exactly the same as the type of the input items.
 type GenericMISOScheduler interface {
-	// returns: (opaque-source-id interface{}, err error)
-	AddInput(ctx context.Context, inputChan <-chan interface{}) (interface{}, error)
+	AddInput(ctx context.Context, inputChan <-chan interface{}) (opaqueSourceId interface{}, err error)
 	GetOutput() <-chan interface{}
-}
-
-type SIMODemuxer interface {
-	AddOutput(outputChan chan<- interface{}, labelPattern string, labelBindingName string) error
-	RemoveOutput(labelBindingName string) error
-	GetInput() chan<- interface{}
 }
 
 type SISOPipe interface {
@@ -28,10 +23,4 @@ type SISOPipe interface {
 
 type EventResult struct {
 	Error error
-}
-
-// Wrappedpacket encapsulates the original packet with its source label.
-type Wrappedpacket struct {
-	label  string
-	packet interface{}
 }

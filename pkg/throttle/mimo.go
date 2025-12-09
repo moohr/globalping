@@ -5,7 +5,9 @@ package throttle
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"time"
 )
 
 type MIMOPacketizedItem struct {
@@ -79,6 +81,9 @@ func (mimoSched *MIMOScheduler) Run(ctx context.Context) {
 				if !ok {
 					return
 				}
+
+				fmt.Printf("[DBG] Received packet: %+v at %s\n", packetraw, time.Now().Format(time.RFC3339Nano))
+
 				packet, ok := packetraw.(MIMOPacketizedItem)
 				if !ok {
 					panic("unexpected item type, it's not of a type of MIMOPacketizedItem")
