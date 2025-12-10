@@ -116,6 +116,11 @@ func (hub *SharedThrottleHub) CreateProxy(ctx context.Context, inChan <-chan int
 	outChan = make(chan interface{})
 	go func() {
 		defer close(outChan)
+		defer func() {
+			log.Printf("[DBG] proxy goroutine for label %s is cleaning resources", labelKey)
+			hub.mimoSched.RemoveOutput(labelKey)
+			close(smoothedInChan)
+		}()
 		defer log.Printf("[DBG] proxy goroutine for label %s closed", labelKey)
 
 		for {
@@ -123,6 +128,9 @@ func (hub *SharedThrottleHub) CreateProxy(ctx context.Context, inChan <-chan int
 			case <-ctx.Done():
 				// the smoothedInChan is never gonna be closed it self
 				// because it is the output of a long-running muxer
+				//
+				// usually, it is expected that the user cancels the context only when everything is settled,
+				// for example, when the last packet of a sequence is comfirmed to be received.
 				return
 			case pktIn, ok := <-smoothedInChan:
 				if !ok {

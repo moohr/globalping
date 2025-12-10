@@ -6,16 +6,28 @@ package raw
 
 import (
 	"context"
-	"fmt"
+	"log"
 	"time"
-
-	"golang.org/x/net/icmp"
 )
 
 type ICMPTrackerEntry struct {
+	Seq        int
 	SentAt     time.Time
 	ReceivedAt []time.Time
 	Timer      *time.Timer
+}
+
+func (itEnt *ICMPTrackerEntry) ReadonlyClone() *ICMPTrackerEntry {
+	if itEnt == nil {
+		return nil
+	}
+
+	newOne := new(ICMPTrackerEntry)
+	*newOne = *itEnt
+	newOne.Timer = nil
+	newOne.ReceivedAt = make([]time.Time, len(itEnt.ReceivedAt))
+	copy(newOne.ReceivedAt, itEnt.ReceivedAt)
+	return newOne
 }
 
 func (itEnt *ICMPTrackerEntry) HasReceived() bool {
@@ -50,100 +62,149 @@ type ServiceRequest struct {
 }
 
 type ICMPTracker struct {
-	id              int
-	initSeq         int
-	latestSeq       int
-	store           map[int]*ICMPTrackerEntry
-	serviceChan     chan chan ServiceRequest
-	closeCh         chan interface{}
-	nrUnAck         int
-	nrMaxCount      *int
-	intv            time.Duration
-	pktTimeout      time.Duration
-	internTimeoutCh chan int
+	store       map[int]*ICMPTrackerEntry
+	serviceChan chan chan ServiceRequest
+	closeCh     chan interface{}
+	pktTimeout  time.Duration
+
+	// Receiving Events
+	// A empty array of ReceivedAt means timeout
+	RecvEvC chan ICMPTrackerEntry
 }
 
 type ICMPTrackerConfig struct {
-	ID            int
-	InitialSeq    int
-	MaxCount      *int
-	PacketTimeout time.Duration
-	Interval      time.Duration
-}
-
-const leastAcceptablePktIntervalMilliseconds = 10
-const maximumAcceptablePktTimeoutSecs = 10
-
-func estimateInternalTimeoutChCapacity(perPktTimeout time.Duration, pktInterval time.Duration) int {
-	// According to the formula:
-	// $$\text{Maximum Outstanding Packets} = \text{Maximum Send Rate} \times \text{Packet Timeout Duration}$$
-
-	var redundancyFactor float64 = 1.5
-
-	cap := int(redundancyFactor * float64(perPktTimeout.Milliseconds()) / float64(pktInterval.Milliseconds()))
-	if cap < 1 {
-		cap = 1
-	}
-
-	return cap
+	PacketTimeout                 time.Duration
+	TimeoutChannelEventBufferSize int
 }
 
 func NewICMPTracker(config *ICMPTrackerConfig) (*ICMPTracker, error) {
-	if config.Interval.Milliseconds() < leastAcceptablePktIntervalMilliseconds {
-		return nil, fmt.Errorf("interval must be at least %d milliseconds", leastAcceptablePktIntervalMilliseconds)
-	}
-
-	if config.PacketTimeout.Seconds() > maximumAcceptablePktTimeoutSecs {
-		return nil, fmt.Errorf("packet timeout must be at most %d seconds", maximumAcceptablePktTimeoutSecs)
-	}
-
 	it := &ICMPTracker{
-		id:              config.ID,
-		initSeq:         config.InitialSeq,
-		latestSeq:       config.InitialSeq,
-		nrMaxCount:      config.MaxCount,
-		store:           make(map[int]*ICMPTrackerEntry),
-		serviceChan:     make(chan chan ServiceRequest),
-		intv:            config.Interval,
-		pktTimeout:      config.PacketTimeout,
-		internTimeoutCh: make(chan int, estimateInternalTimeoutChCapacity(config.PacketTimeout, config.Interval)),
+		store:       make(map[int]*ICMPTrackerEntry),
+		serviceChan: make(chan chan ServiceRequest),
+		closeCh:     make(chan interface{}),
+		RecvEvC:     make(chan ICMPTrackerEntry, config.TimeoutChannelEventBufferSize),
 	}
 	return it, nil
 }
 
-func (it *ICMPTracker) doRun(ctx context.Context) {
-	it.closeCh = make(chan interface{})
-	defer close(it.serviceChan)
+// returns a read-only channel of timeout events
+func (it *ICMPTracker) Run(ctx context.Context) {
+	go func() {
+		defer close(it.serviceChan)
 
-	for {
+		for {
 
-		serviceSubCh := make(chan ServiceRequest)
+			serviceSubCh := make(chan ServiceRequest)
 
-		select {
-		case <-it.closeCh:
-			return
-		case it.serviceChan <- serviceSubCh:
-			serviceReq := <-serviceSubCh
-			err := serviceReq.Func(ctx)
-			serviceReq.Result <- err
-			close(serviceReq.Result)
+			select {
+			case <-it.closeCh:
+				return
+			case it.serviceChan <- serviceSubCh:
+				serviceReq := <-serviceSubCh
+				err := serviceReq.Func(ctx)
+				serviceReq.Result <- err
+				close(serviceReq.Result)
+			}
 		}
+	}()
+}
+
+func (it *ICMPTracker) cleanupEntry(seq int) {
+	requestCh, ok := <-it.serviceChan
+	if !ok {
+		// engine is already shutdown
+		return
+	}
+	defer close(requestCh)
+
+	fn := func(ctx context.Context) error {
+		delete(it.store, seq)
+		return nil
+	}
+	req := ServiceRequest{
+		Func:   fn,
+		Result: make(chan error),
+	}
+	requestCh <- req
+	err := <-req.Result
+	if err != nil {
+		log.Printf("failed to cleanup entry for seq %d: %v", seq, err)
 	}
 }
 
-// returns a read-only channel of timeout events
-func (it *ICMPTracker) Run(ctx context.Context, conn *icmp.PacketConn) <-chan int {
-	go it.doRun(ctx)
+func (it *ICMPTracker) handleInTime(seq int) {
+	requestCh, ok := <-it.serviceChan
+	if !ok {
+		// engine is already shutdown
+		return
+	}
+	defer close(requestCh)
 
-	timeoutCh := make(chan int)
-	go func() {
-		defer close(timeoutCh)
-		for seq := range it.internTimeoutCh {
-			timeoutCh <- seq
+	fn := func(ctx context.Context) error {
+		if ent, ok := it.store[seq]; ok {
+			if ent.Timer != nil {
+				ent.Timer.Stop()
+				ent.Timer = nil
+			}
+			ent.ReceivedAt = append(ent.ReceivedAt, time.Now())
+			if clone := ent.ReadonlyClone(); clone != nil {
+				go func(ent ICMPTrackerEntry) {
+					it.RecvEvC <- ent
+				}(*clone)
+			}
+
+			go func() {
+				// we won't keep the entry indefinitely just for waiting dup icmp replies.
+				<-time.After(it.pktTimeout)
+				it.cleanupEntry(seq)
+			}()
 		}
-	}()
+		return nil
+	}
 
-	return timeoutCh
+	req := ServiceRequest{
+		Func:   fn,
+		Result: make(chan error),
+	}
+	requestCh <- req
+	err := <-req.Result
+	if err != nil {
+		log.Printf("failed to handle in-time for seq %d: %v", seq, err)
+	}
+}
+
+func (it *ICMPTracker) handleTimeout(seq int) {
+	requestCh, ok := <-it.serviceChan
+	if !ok {
+		// engine is already shutdown
+		return
+	}
+	defer close(requestCh)
+
+	fn := func(ctx context.Context) error {
+		if ent, ok := it.store[seq]; ok {
+			if len(ent.ReceivedAt) > 0 {
+				return nil
+			}
+			if clone := ent.ReadonlyClone(); clone != nil {
+				go func(ent ICMPTrackerEntry) {
+					it.RecvEvC <- ent
+				}(*clone)
+			}
+		}
+		delete(it.store, seq)
+		return nil
+	}
+
+	req := ServiceRequest{
+		Func:   fn,
+		Result: make(chan error),
+	}
+	requestCh <- req
+	err := <-req.Result
+	if err != nil {
+		log.Printf("failed to handle timeout for seq %d: %v", seq, err)
+	}
 }
 
 func (it *ICMPTracker) MarkSent(seq int) error {
@@ -161,13 +222,10 @@ func (it *ICMPTracker) MarkSent(seq int) error {
 			Timer:  time.NewTimer(it.pktTimeout),
 		}
 		it.store[seq] = ent
-		it.nrUnAck++
 
 		go func() {
 			<-ent.Timer.C
-			ctx, cancel := context.WithTimeout(context.TODO(), it.pktTimeout)
-			defer cancel()
-			it.tryMarkAsTimeout(ctx, seq)
+			it.handleTimeout(seq)
 		}()
 
 		return nil
@@ -182,256 +240,14 @@ func (it *ICMPTracker) MarkSent(seq int) error {
 	return <-resultCh
 }
 
-func (it *ICMPTracker) tryMarkAsTimeout(ctx context.Context, seq int) error {
-
-	fn := func(ctx context.Context) error {
-		if ent, ok := it.store[seq]; ok {
-			if len(ent.ReceivedAt) > 0 {
-				return nil
-			}
-
-			it.nrUnAck--
-			var zeroTime time.Time
-			ent.ReceivedAt = append(ent.ReceivedAt, zeroTime)
-
-			go func(seq int) {
-				select {
-				case it.internTimeoutCh <- seq:
-					return
-				case <-time.After(it.pktTimeout):
-					return
-				}
-			}(seq)
-		}
-		return nil
-	}
-
-	select {
-	case requestCh, ok := <-it.serviceChan:
-		if !ok {
-			// runner is closed
-			return nil
-		}
-		defer close(requestCh)
-		resultCh := make(chan error)
-		defer close(resultCh)
-
-		requestCh <- ServiceRequest{
-			Func:   fn,
-			Result: resultCh,
-		}
-		return <-resultCh
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
 func (it *ICMPTracker) MarkReceived(seq int) error {
-	requestCh, ok := <-it.serviceChan
-	if !ok {
-		// engine is already shutdown
-		return nil
-	}
-	defer close(requestCh)
-
-	fn := func(ctx context.Context) error {
-		if ent, ok := it.store[seq]; ok {
-			if ent.Timer != nil {
-				ent.Timer.Stop()
-				ent.Timer = nil
-			}
-			if ent.ReceivedAt == nil {
-				it.nrUnAck--
-			}
-			ent.ReceivedAt = append(ent.ReceivedAt, time.Now())
-		}
-		return nil
-	}
-
-	resultCh := make(chan error)
-
-	requestCh <- ServiceRequest{
-		Func:   fn,
-		Result: resultCh,
-	}
-
-	return <-resultCh
-}
-
-func (it *ICMPTracker) GetNrUnAck() int {
-	var nrUnAck *int = new(int)
-	serviceCh, ok := <-it.serviceChan
-	if !ok {
-		// engine is already shutdown
-		return 0
-	}
-	defer close(serviceCh)
-
-	fn := func(ctx context.Context) error {
-		*nrUnAck = it.nrUnAck
-		return nil
-	}
-	resultCh := make(chan error)
-	serviceCh <- ServiceRequest{
-		Func:   fn,
-		Result: resultCh,
-	}
-	<-resultCh
-	return *nrUnAck
-}
-
-func (it *ICMPTracker) IterateSeq() int {
-	requestCh, ok := <-it.serviceChan
-	if !ok {
-		// engine is already shutdown
-		return 0
-	}
-	defer close(requestCh)
-
-	var seqPtr *int = new(int)
-
-	fn := func(ctx context.Context) error {
-		seq := it.latestSeq
-		it.latestSeq++
-		*seqPtr = seq
-		return nil
-	}
-
-	resultCh := make(chan error)
-	requestCh <- ServiceRequest{
-		Func:   fn,
-		Result: resultCh,
-	}
-	<-resultCh
-	return *seqPtr
-}
-
-func shouldICMPTrackerContinue(latestSeq, initSeq, maxCount int) bool {
-	return (latestSeq - initSeq) < maxCount
-}
-
-func (it *ICMPTracker) WaitForNext() time.Duration {
-	requestCh, ok := <-it.serviceChan
-	if !ok {
-		// engine is already shutdown
-		return 0
-	}
-	defer close(requestCh)
-
-	noSleep := time.Duration(0)
-	var sleepDuration *time.Duration = &noSleep
-
-	fn := func(ctx context.Context) error {
-		// don't actually sleep here, just determine the sleep duration
-		if it.nrMaxCount != nil {
-			if shouldICMPTrackerContinue(it.latestSeq, it.initSeq, *it.nrMaxCount) {
-				// sleep only if there's still more to send
-				*sleepDuration = it.intv
-			}
-		} else {
-			// there's always more to send
-			*sleepDuration = it.intv
-		}
-		return nil
-	}
-	resultCh := make(chan error)
-	requestCh <- ServiceRequest{
-		Func:   fn,
-		Result: resultCh,
-	}
-	<-resultCh
-	return *sleepDuration
-}
-
-func (it *ICMPTracker) IsNotDone() bool {
-	requestCh, ok := <-it.serviceChan
-	if !ok {
-		// engine is already shutdown
-		return false
-	}
-	defer close(requestCh)
-
-	var contPtr *bool = new(bool)
-	fn := func(ctx context.Context) error {
-		var cont bool
-		if it.nrMaxCount != nil {
-			cont = shouldICMPTrackerContinue(it.latestSeq, it.initSeq, *it.nrMaxCount)
-		} else {
-			cont = true
-		}
-		*contPtr = cont
-		return nil
-	}
-	resultCh := make(chan error)
-	requestCh <- ServiceRequest{
-		Func:   fn,
-		Result: resultCh,
-	}
-	<-resultCh
-	return *contPtr
+	it.handleInTime(seq)
+	return nil
 }
 
 func (it *ICMPTracker) Close() {
-	if it.closeCh == nil || it.internTimeoutCh == nil {
+	if it.closeCh == nil {
 		panic("ICMPTracker is not started yet")
 	}
 	close(it.closeCh)
-	close(it.internTimeoutCh)
-}
-
-func (it *ICMPTracker) GetID() int {
-	return it.id
-}
-
-func (it *ICMPTracker) ReadTrackerEntry(seq int) *ICMPTrackerEntry {
-	serviceCh, ok := <-it.serviceChan
-	if !ok {
-		// engine is already shutdown
-		return nil
-	}
-
-	defer close(serviceCh)
-
-	var result struct {
-		entry *ICMPTrackerEntry
-	}
-	resultPtr := &result
-	fn := func(ctx context.Context) error {
-		if ent, ok := it.store[seq]; ok {
-			newEnt := new(ICMPTrackerEntry)
-			*newEnt = *ent
-			newEnt.Timer = nil
-			resultPtr.entry = newEnt
-		}
-		return nil
-	}
-	resultCh := make(chan error)
-	serviceCh <- ServiceRequest{
-		Func:   fn,
-		Result: resultCh,
-	}
-	<-resultCh
-
-	return resultPtr.entry
-}
-
-func (it *ICMPTracker) DeleteTrackerEntry(seq int) {
-	serviceCh, ok := <-it.serviceChan
-	if !ok {
-		// engine is already shutdown
-		return
-	}
-	defer close(serviceCh)
-
-	fn := func(ctx context.Context) error {
-		delete(it.store, seq)
-		return nil
-	}
-
-	resultCh := make(chan error)
-	serviceCh <- ServiceRequest{
-		Func:   fn,
-		Result: resultCh,
-	}
-	<-resultCh
 }
