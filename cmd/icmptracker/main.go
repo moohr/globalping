@@ -18,13 +18,11 @@ type MockPing struct {
 }
 
 func (mp *MockPing) Run(tracker *pkgraw.ICMPTracker) {
-	go func(seq int) {
-		tracker.MarkSent(seq)
-		log.Printf("Sent mock ping seq: %d", seq)
-		<-time.After(mp.RTT)
-		tracker.MarkReceived(seq)
-		log.Printf("Send mock ping reply for seq %d", seq)
-	}(mp.Seq)
+	tracker.MarkSent(mp.Seq)
+	log.Printf("Sent mock ping seq: %d", mp.Seq)
+	<-time.After(mp.RTT)
+	tracker.MarkReceived(mp.Seq)
+	log.Printf("Send mock ping reply for seq %d", mp.Seq)
 }
 
 func main() {
@@ -63,7 +61,6 @@ func main() {
 
 		for _, mockPing := range mockPings {
 			mockPing.Run(tracker)
-			<-time.After(mockPing.RTT)
 		}
 
 	}()
