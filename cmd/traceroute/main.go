@@ -308,6 +308,11 @@ func main() {
 			}
 			log.Println("Server exitted")
 		}
+		go func() {
+			<-ctx.Done()
+			log.Println("Shutting down server")
+			server.Shutdown(ctx)
+		}()
 	}()
 
 	sigs := make(chan os.Signal, 1)
