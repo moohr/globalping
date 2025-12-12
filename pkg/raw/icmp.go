@@ -2,290 +2,203 @@ package raw
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"log"
 	"net"
+	"time"
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
-	"golang.org/x/net/ipv6"
 )
 
-// Package consists of types and functions for sending, as well as receiving, ICMP packets.
+type ICMP4TransceiverConfig struct {
+	// ICMP ID to use
+	ID int
 
-type RawBinary []byte
+	// Where to ping to
+	Dst net.IPAddr
 
-func (rb RawBinary) MarshalJSON() ([]byte, error) {
-	return []byte("\"" + base64.StdEncoding.EncodeToString(rb) + "\""), nil
+	PktTimeout time.Duration
 }
 
-type WrappedPacketType string
-
-const (
-	PktICMPRequest  WrappedPacketType = "icmp_request"
-	PktICMPResponse WrappedPacketType = "icmp_response"
-)
-
-type WrappedPacket struct {
-	Id   int               `json:"id"`
-	Seq  int               `json:"seq"`
-	Src  string            `json:"src"`
-	Dst  string            `json:"dst"`
-	Type WrappedPacketType `json:"type"`
-
-	// todo: implement raw ip packet later
-	TTL *int `json:"ttl,omitempty"`
-
-	// Note: the Data field is completely optional, and might be omitted for generality.
-	Data RawBinary `json:"data,omitempty"`
+type ICMPSendRequest struct {
+	Seq int
+	TTL int
 }
 
-type ICMPTransceiverConfig struct {
-	Id          int
-	Destination string
-	InitialSeq  int
+type ICMPReceiveReply struct {
+	Seq int
+	TTL int
 
-	// Buffer size for receiving and parsing single packet
-	BufSize int
+	// it's basically the same as Addr.Network() + ':' + Addr.String()
+	Peer string
 
-	// Custom resolver might be provided by the user
-	CustomResolver *net.Resolver
+	ReceivedAt time.Time
 
-	PreferV6 bool
-	PreferV4 bool
+	ICMPTypeV4 ipv4.ICMPType
 }
 
-type ICMPTransceiver struct {
-	config ICMPTransceiverConfig
+type ICMP4Transceiver struct {
+	id             int
+	packetConn     net.PacketConn
+	ipv4PacketConn *ipv4.PacketConn
+	pktTimeout     time.Duration
+	Dst            net.IPAddr
 
-	conn  *icmp.PacketConn
-	conn6 *icmp.PacketConn
+	// User send requests to here, we retrieve the request,
+	// then we translate it to the wire format.
+	SendC chan ICMPSendRequest
 
-	// Direction of In: User -> Here
-	// the value is the seq
-	In chan int
-
-	// Direction of Out: Here -> User
-	Out chan *WrappedPacket
-
-	// The actual pinging destination IP address
-	DestinationIP net.IP
+	// ICMP replies
+	ReceiveC chan ICMPReceiveReply
 }
 
-func NewICMPTransceiver(config ICMPTransceiverConfig) (*ICMPTransceiver, error) {
+func NewICMP4Transceiver(config ICMP4TransceiverConfig) (*ICMP4Transceiver, error) {
 
-	conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
-	if err != nil {
-		return nil, fmt.Errorf("failed to listen on packet:icmp: %v", err)
+	if config.Dst.IP.To4() == nil {
+		return nil, fmt.Errorf("destination is not an IPv4 address")
 	}
 
-	conn6, err := icmp.ListenPacket("ip6:icmp", "::")
-	if err != nil {
-		return nil, fmt.Errorf("failed to listen on packet:icmp: %v", err)
+	tracer := &ICMP4Transceiver{
+		SendC:      make(chan ICMPSendRequest),
+		ReceiveC:   make(chan ICMPReceiveReply),
+		pktTimeout: config.PktTimeout,
+		Dst:        config.Dst,
 	}
 
-	return &ICMPTransceiver{
-		config: config,
-		In:     make(chan int),
-		Out:    make(chan *WrappedPacket),
-		conn:   conn,
-		conn6:  conn6,
-	}, nil
+	return tracer, nil
 }
 
-func (icmpTR *ICMPTransceiver) readICMPPackets(conn *icmp.PacketConn, protocol int) error {
-	receivBuf := make([]byte, icmpTR.config.BufSize)
-	n, peer, err := icmpTR.conn.ReadFrom(receivBuf)
-	if err != nil {
-		return fmt.Errorf("failed to read from connection: %v", err)
-	}
-	log.Printf("read %d bytes from %s", n, peer.String())
-	receivMsg, err := icmp.ParseMessage(protocol, receivBuf[:n])
-	if err != nil {
-		return fmt.Errorf("failed to parse icmp message: %v", err)
-	}
-	if icmpEcho, ok := receivMsg.Body.(*icmp.Echo); ok && icmpEcho.ID == icmpTR.config.Id {
-		wrappedPkt := &WrappedPacket{
-			Id:   icmpEcho.ID,
-			Seq:  icmpEcho.Seq,
-			Src:  peer.String(),
-			Dst:  icmpTR.config.Destination,
-			Type: PktICMPResponse,
-			TTL:  nil,
-			Data: RawBinary(receivBuf[:n]),
-		}
-		icmpTR.Out <- wrappedPkt
-	}
-	return nil
-}
-
-func checkInetFamilySupportness() (v4 bool, v6 bool, err error) {
-	v4 = false
-	v6 = false
-
+func getMaximumMTU() int {
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		return v4, v6, err
+		panic(err)
 	}
-
+	maximumMTU := -1
 	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			log.Printf("failed to get addrs of interface %s: %v", iface.Name, err)
-			continue
-		}
-		for _, addr := range addrs {
-			if addr.Network() == "ip4" {
-				v4 = true
-				continue
-			}
-			if addr.Network() == "ip6" {
-				v6 = true
-				continue
-			}
+		if iface.MTU > maximumMTU {
+			maximumMTU = iface.MTU
 		}
 	}
-
-	return v4, v6, nil
+	if maximumMTU == -1 {
+		panic("can't determine maximum MTU")
+	}
+	return maximumMTU
 }
 
-func (icmpTR *ICMPTransceiver) getIpCandidates(ctx context.Context) ([]net.IP, error) {
-	v4Sup, v6Sup, err := checkInetFamilySupportness()
+func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
+	conn, err := net.ListenPacket("ip4:icmp", "0.0.0.0")
 	if err != nil {
-		return nil, fmt.Errorf("can't determine internet family supportness: %v", err)
+		return fmt.Errorf("failed to listen on packet:icmp: %v", err)
 	}
-
-	if !v4Sup && !v6Sup {
-		return nil, fmt.Errorf("no internet family supportness found")
-	}
-
-	// no need to check the nil-ness of resolver, a nil resolver behaves exactly as a default resolver.
-	var resolver *net.Resolver = icmpTR.config.CustomResolver
-	ipCandidates := make([]net.IP, 0)
-	v6Only := make([]net.IP, 0)
-	v4Only := make([]net.IP, 0)
-	if v6Sup {
-		v6IPs, err := resolver.LookupIP(ctx, "ip6", icmpTR.config.Destination)
-		if err == nil {
-			ipCandidates = append(ipCandidates, v6IPs...)
-		}
-		v6Only = v6IPs
-	}
-	if v4Sup {
-		v4IPs, err := resolver.LookupIP(ctx, "ip4", icmpTR.config.Destination)
-		if err == nil {
-			ipCandidates = append(ipCandidates, v4IPs...)
-		}
-		v4Only = v4IPs
-	}
-	if len(ipCandidates) == 0 {
-		return nil, fmt.Errorf("no ip candidates found for destination %s", icmpTR.config.Destination)
-	}
-	if icmpTR.config.PreferV6 {
-		if len(v6Only) == 0 {
-			return nil, fmt.Errorf("user preferred v6 but there is no v6 ip candidates")
-		}
-		ipCandidates = v6Only
-	} else if icmpTR.config.PreferV4 {
-		if len(v4Only) == 0 {
-			return nil, fmt.Errorf("user preferred v4 but there is no v4 ip candidates")
-		}
-		ipCandidates = v4Only
-	}
-	return ipCandidates, nil
-}
-
-func (icmpTR *ICMPTransceiver) Run(ctx context.Context) error {
-
-	ipCandidates, err := icmpTR.getIpCandidates(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get ip candidates: %v", err)
-	}
-
-	icmpTR.DestinationIP = ipCandidates[0]
-	log.Printf("will send pings to %s", icmpTR.DestinationIP.String())
-
-	var writePacketConn *icmp.PacketConn
-	var writeICMPType icmp.Type
-
-	if icmpTR.DestinationIP.To4() != nil {
-		// only start one packet receiver based on detected inet family
-		writePacketConn = icmpTR.conn
-		writeICMPType = ipv4.ICMPTypeEcho
-		go func() {
-			log.Printf("starting v4 icmp parser")
-			for {
-				select {
-				case <-ctx.Done():
-					log.Printf("exitting v4 icmp parser")
-					return
-				default:
-					err := icmpTR.readICMPPackets(icmpTR.conn, ipv4.ICMPTypeEchoReply.Protocol())
-					if err != nil {
-						log.Printf("failed to read v4 icmp packets: %v", err)
-					}
-				}
-			}
-		}()
-	} else {
-		writePacketConn = icmpTR.conn6
-		writeICMPType = ipv6.ICMPTypeEchoRequest
-		go func() {
-			log.Printf("starting v6 icmp parser")
-			for {
-				select {
-				case <-ctx.Done():
-					log.Printf("exitting v6 icmp parser")
-					return
-				default:
-					err := icmpTR.readICMPPackets(icmpTR.conn6, ipv6.ICMPTypeEchoReply.Protocol())
-					if err != nil {
-						log.Printf("failed to read v6 icmp packets: %v", err)
-					}
-				}
-			}
-		}()
-	}
-
-	log.Printf("sending ICMP type: %v", writeICMPType)
-
 	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				icmpTR.doCleanUp()
-				return
-			case seq := <-icmpTR.In:
-				writeMsg := icmp.Message{
-					Type: writeICMPType,
-					Body: &icmp.Echo{
-						ID:  icmpTR.config.Id,
-						Seq: seq,
-					},
-				}
-				writeBuff, err := writeMsg.Marshal(nil)
-				if err != nil {
-					log.Printf("failed to marshal icmp message: %v", err)
-					continue
-				}
-				if _, err := writePacketConn.WriteTo(writeBuff, &net.IPAddr{IP: icmpTR.DestinationIP}); err != nil {
-					log.Printf("failed to write to connection: %v", err)
+		defer conn.Close()
+
+		icmp4tr.packetConn = conn
+		icmp4tr.ipv4PacketConn = ipv4.NewPacketConn(conn)
+
+		if err := icmp4tr.ipv4PacketConn.SetControlMessage(ipv4.FlagTTL|ipv4.FlagSrc|ipv4.FlagDst|ipv4.FlagInterface, true); err != nil {
+			log.Fatal(err)
+		}
+
+		wm := icmp.Message{
+			Type: ipv4.ICMPTypeEcho, Code: 0,
+			Body: &icmp.Echo{
+				ID:   icmp4tr.id,
+				Data: nil,
+			},
+		}
+
+		bufSize := getMaximumMTU()
+		rb := make([]byte, bufSize)
+
+		// launch receiving goroutine
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					err := icmp4tr.ipv4PacketConn.SetReadDeadline(time.Now().Add(icmp4tr.pktTimeout))
+					if err != nil {
+						log.Fatalf("failed to set read deadline: %v", err)
+					}
+					nBytes, ctrlMsg, peerAddr, err := icmp4tr.ipv4PacketConn.ReadFrom(rb)
+					if err != nil {
+						if err, ok := err.(net.Error); ok && err.Timeout() {
+							log.Printf("timeout reading from connection, skipping")
+							continue
+						}
+						log.Fatalf("failed to read from connection: %v", err)
+					}
+					receiveMsg, err := icmp.ParseMessage(ipv4.ICMPTypeEchoReply.Protocol(), rb[:nBytes])
+					if err != nil {
+						log.Fatalf("failed to parse icmp message: %v", err)
+					}
+
+					receivedAt := time.Now()
+					replyObject := ICMPReceiveReply{
+						ReceivedAt: receivedAt,
+						Peer:       peerAddr.Network() + ":" + peerAddr.String(),
+						TTL:        ctrlMsg.TTL,
+						Seq:        -1, // if can't determine, use -1
+					}
+
+					icmpBody, ok := receiveMsg.Body.(*icmp.Echo)
+					if !ok {
+						log.Printf("failed to parse icmp body: %+v", receiveMsg)
+						continue
+					}
+
+					if icmpBody.ID != icmp4tr.id {
+						// silently ignore the message that is not for us
+						continue
+					}
+
+					replyObject.Seq = icmpBody.Seq
+
+					switch receiveMsg.Type {
+					case ipv4.ICMPTypeTimeExceeded:
+						replyObject.ICMPTypeV4 = ipv4.ICMPTypeTimeExceeded
+					case ipv4.ICMPTypeEchoReply:
+						replyObject.ICMPTypeV4 = ipv4.ICMPTypeEchoReply
+					default:
+						log.Printf("unknown ICMP message: %+v", receiveMsg)
+						continue
+					}
+
+					icmp4tr.ReceiveC <- replyObject
 				}
 			}
-		}
-	}()
-	return nil
-}
+		}()
 
-func (icmpTR *ICMPTransceiver) doCleanUp() {
-	if err := icmpTR.conn.Close(); err != nil {
-		log.Printf("failed to close connection: %v", err)
-	}
-	if err := icmpTR.conn6.Close(); err != nil {
-		log.Printf("failed to close connection: %v", err)
-	}
+		// launch sending goroutine
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case req := <-icmp4tr.SendC:
+					wm.Body.(*icmp.Echo).Seq = req.Seq
+					wb, err := wm.Marshal(nil)
+					if err != nil {
+						log.Fatalf("failed to marshal icmp message: %v", err)
+					}
+
+					if err := icmp4tr.ipv4PacketConn.SetTTL(req.TTL); err != nil {
+						log.Fatalf("failed to set TTL: %v", err)
+					}
+
+					dst := icmp4tr.Dst
+					if _, err := icmp4tr.ipv4PacketConn.WriteTo(wb, nil, &dst); err != nil {
+						log.Fatalf("failed to write to connection: %v", err)
+					}
+				}
+			}
+		}()
+
+		<-ctx.Done()
+	}()
+
+	return nil
 }
