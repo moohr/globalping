@@ -40,13 +40,8 @@ func (hubCmd HubCmd) Run() error {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
-	ctx := context.Background()
 	sm := pkgsafemap.NewSafeMap()
 	cr := pkgconnreg.NewConnRegistry(sm)
-	pingTaskHandler, err := pkghandler.NewPingTaskHandler(ctx, cr)
-	if err != nil {
-		log.Fatalf("Failed to create ping task handler: %v", err)
-	}
 
 	wsHandler := pkghandler.NewWebsocketHandler(&upgrader, cr)
 	connsHandler := pkghandler.NewConnsHandler(cr)
@@ -54,7 +49,6 @@ func (hubCmd HubCmd) Run() error {
 	muxer := http.NewServeMux()
 	muxer.Handle("/ws", wsHandler)
 	muxer.Handle("/conns", connsHandler)
-	muxer.Handle("/ping-task", pingTaskHandler)
 
 	clientCerts := make([]tls.Certificate, 0)
 	if hubCmd.ClientCert != "" && hubCmd.ClientCertKey != "" {
