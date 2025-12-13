@@ -12,9 +12,7 @@ import (
 	pkgctx "example.com/rbmq-demo/pkg/ctx"
 	pkgnodereg "example.com/rbmq-demo/pkg/nodereg"
 	pkgpinger "example.com/rbmq-demo/pkg/pinger"
-	pkgrabbitmqping "example.com/rbmq-demo/pkg/rabbitmqping"
 	pkgrbmqrpc "example.com/rbmq-demo/pkg/rpc"
-	pkgsimpleping "example.com/rbmq-demo/pkg/simpleping"
 	pkgutils "example.com/rbmq-demo/pkg/utils"
 	amqp "github.com/rabbitmq/amqp091-go"
 )

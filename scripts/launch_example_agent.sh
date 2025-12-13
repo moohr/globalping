@@ -5,7 +5,7 @@ script_dir=$(dirname $script_path)
 
 cd $script_dir/..
 
-go build -o bin/globalping ./cmd/globalping
+
 bin/globalping agent \
   --node-name=agent1 \
   --http-endpoint=https://agent1.example.com:8081 \

@@ -5,7 +5,7 @@ script_dir=$(dirname $script_path)
 
 cd $script_dir/..
 
-go build -o bin/globalping ./cmd/globalping
+
 bin/globalping hub \
   --peer-c-as=certs/ca.pem \
   --client-cert=certs/hub.pem \
