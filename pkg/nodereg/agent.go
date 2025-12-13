@@ -1,11 +1,14 @@
 package nodereg
 
 import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"net/url"
-	"sync"
 	"time"
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
@@ -18,6 +21,7 @@ const (
 	AttributeKeyNodeName          = "NodeName"
 	AttributeKeyPingCapability    = "CapabilityPing"
 	AttributeKeyRabbitMQQueueName = "RabbitMQQueueName"
+	AttributeKeyHttpEndpoint      = "HttpEndpoint"
 )
 
 type NodeRegistrationAgent struct {
@@ -28,11 +32,10 @@ type NodeRegistrationAgent struct {
 	SeqID          *uint64
 	TickInterval   *time.Duration
 	intialized     bool
-	closed         bool
-	closeMutex     sync.Mutex
-	closeCh        chan struct{}
 	NodeAttributes pkgconnreg.ConnectionAttributes
 	LogEchoReplies bool
+	ServerName     string
+	CustomCertPool *x509.CertPool
 }
 
 func (agent *NodeRegistrationAgent) Init() error {
@@ -66,8 +69,6 @@ func (agent *NodeRegistrationAgent) Init() error {
 		*agent.TickInterval = 1 * time.Second
 		log.Printf("Using default tick interval: %s", *agent.TickInterval)
 	}
-
-	agent.closeCh = make(chan struct{})
 
 	agent.intialized = true
 	return nil
@@ -118,15 +119,15 @@ func (agent *NodeRegistrationAgent) sendMessage(c *websocket.Conn, msg interface
 }
 
 // Connect and start the loop
-func (agent *NodeRegistrationAgent) Run() chan error {
+func (agent *NodeRegistrationAgent) Run(ctx context.Context) chan error {
 	errCh := make(chan error)
 	go func() {
-		errCh <- agent.doRun()
+		errCh <- agent.doRun(ctx)
 	}()
 	return errCh
 }
 
-func (agent *NodeRegistrationAgent) doRun() error {
+func (agent *NodeRegistrationAgent) doRun(ctx context.Context) error {
 	if !agent.intialized {
 		return fmt.Errorf("agent not initialized")
 	}
@@ -142,8 +143,28 @@ func (agent *NodeRegistrationAgent) doRun() error {
 	go func() {
 		defer close(errCh)
 
+		systemCertPool, err := x509.SystemCertPool()
+		if err != nil {
+			errCh <- fmt.Errorf("failed to get system cert pool: %v", err)
+			return
+		}
+
+		tlsConfig := &tls.Config{
+			RootCAs:    systemCertPool,
+			ServerName: agent.ServerName,
+		}
+		if agent.CustomCertPool != nil {
+			tlsConfig.RootCAs = agent.CustomCertPool
+		}
+
+		dialer := &websocket.Dialer{
+			Proxy:            http.ProxyFromEnvironment,
+			HandshakeTimeout: 45 * time.Second,
+			TLSClientConfig:  tlsConfig,
+		}
+
 		log.Printf("Agent %s started, connecting to %s", agent.NodeName, u.String())
-		c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+		c, _, err := dialer.Dial(u.String(), nil)
 		if err != nil {
 			errCh <- fmt.Errorf("failed to dial %s: %v", u.String(), err)
 			return
@@ -183,6 +204,8 @@ func (agent *NodeRegistrationAgent) doRun() error {
 
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case receiverErr := <-receiverExit:
 				var err error
 				if receiverErr != nil {
@@ -207,29 +230,9 @@ func (agent *NodeRegistrationAgent) doRun() error {
 					errCh <- fmt.Errorf("failed to send echo message: %v", err)
 					return
 				}
-			case <-agent.closeCh:
-				agent.closed = true
-				errCh <- nil
-				return
 			}
 		}
 	}()
 
 	return <-errCh
-}
-
-func (agent *NodeRegistrationAgent) Shutdown() error {
-	agent.closeMutex.Lock()
-	defer agent.closeMutex.Unlock()
-
-	if !agent.intialized {
-		return fmt.Errorf("agent not initialized")
-	}
-
-	if agent.closed {
-		return fmt.Errorf("agent already closed")
-	}
-
-	close(agent.closeCh)
-	return nil
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -17,6 +18,8 @@ import (
 	"syscall"
 	"time"
 
+	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
+	pkgnodereg "example.com/rbmq-demo/pkg/nodereg"
 	pkgraw "example.com/rbmq-demo/pkg/raw"
 	pkgthrottle "example.com/rbmq-demo/pkg/throttle"
 	pkgutils "example.com/rbmq-demo/pkg/utils"
@@ -307,10 +310,36 @@ func selectDstIP(ctx context.Context, resolver *net.Resolver, host string, prefe
 	return &dst, nil
 }
 
-func main() {
+type AgentCmd struct {
+	NodeName      string   `help:"The name of the node" default:"traceroute-1"`
+	HttpEndpoint  string   `help:"The HTTP endpoint of the node" default:"https://localhost:8080/simpleping"`
+	ServerAddress string   `help:"The server address of the node" default:"https://localhost:8080"`
+	WebSocketPath string   `help:"The WebSocket path of the node" default:"/ws"`
+	PeerCAs       []string `help:"A list of path to the CAs use to verify peer certificates" type:"path"`
+	ServerName    string   `help:"The name of the server" default:"traceroute"`
+}
+
+var CLI struct {
+	Agent AgentCmd
+}
+
+func (agentCmd *AgentCmd) Run() error {
+
 	ctx := context.TODO()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	var customCAs *x509.CertPool = nil
+	if agentCmd.PeerCAs != nil {
+		customCAs = x509.NewCertPool()
+		for _, ca := range agentCmd.PeerCAs {
+			caData, err := os.ReadFile(ca)
+			if err != nil {
+				log.Fatalf("failed to read CA file %s: %v", ca, err)
+			}
+			customCAs.AppendCertsFromPEM(caData)
+		}
+	}
 
 	if *sharedQuota < 1 {
 		log.Fatalf("shared quota must be greater than 0")
@@ -367,6 +396,29 @@ func main() {
 		}()
 	}()
 
+	attributes := make(pkgconnreg.ConnectionAttributes)
+	attributes[pkgnodereg.AttributeKeyPingCapability] = "true"
+	attributes[pkgnodereg.AttributeKeyNodeName] = agentCmd.NodeName
+	attributes[pkgnodereg.AttributeKeyHttpEndpoint] = agentCmd.HttpEndpoint
+	agent := pkgnodereg.NodeRegistrationAgent{
+		ServerAddress: agentCmd.ServerAddress,
+		WebSocketPath: agentCmd.WebSocketPath,
+		NodeName:      agentCmd.NodeName,
+	}
+	agent.NodeAttributes = attributes
+	log.Println("Node attributes will be announced as:", attributes)
+
+	log.Println("Initializing node registration agent...")
+	if err = agent.Init(); err != nil {
+		log.Fatalf("Failed to initialize agent: %v", err)
+	}
+
+	log.Println("Starting node registration agent...")
+
+	agent.CustomCertPool = customCAs
+	agent.ServerName = agentCmd.ServerName
+	nodeRegAgentErrCh := agent.Run(ctx)
+
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigs
@@ -376,4 +428,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to run time sliced event loop scheduler: %v", err)
 	}
+
+	err = <-nodeRegAgentErrCh
+	if err != nil {
+		log.Fatalf("failed to run node registration agent: %v", err)
+	}
+	return nil
 }

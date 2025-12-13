@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	"flag"
+	"crypto/tls"
+	"crypto/x509"
 	"log"
 	"net"
 	"net/http"
@@ -12,40 +13,30 @@ import (
 	"time"
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
-	pkgctx "example.com/rbmq-demo/pkg/ctx"
+
 	pkghandler "example.com/rbmq-demo/pkg/handler"
 	pkgsafemap "example.com/rbmq-demo/pkg/safemap"
+	"github.com/alecthomas/kong"
 	"github.com/gorilla/websocket"
-	amqp "github.com/rabbitmq/amqp091-go"
 )
-
-var addr = flag.String("addr", "localhost:8080", "http service address")
-var rabbitMQBrokerURL = flag.String("rabbitmq-broker-url", "amqp://localhost:5672/", "RabbitMQ broker URL")
 
 var upgrader = websocket.Upgrader{}
 
 const serverShutdownTimeout = 30 * time.Second
 
-func main() {
-	flag.Parse()
+type HubCmd struct {
+	PeerCAs []string `help:"A list of path to the CAs use to verify peer certificates" type:"path"`
+	Address string   `help:"The address to listen on" default:"localhost:8080"`
+}
+
+func (hubCmd HubCmd) Run() error {
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
 	ctx := context.Background()
-
-	conn, err := amqp.Dial(*rabbitMQBrokerURL)
-	if err != nil {
-		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
-	}
-	defer conn.Close()
-
-	ctx = pkgctx.WithRabbitMQConnection(ctx, conn)
-
 	sm := pkgsafemap.NewSafeMap()
-
 	cr := pkgconnreg.NewConnRegistry(sm)
-
 	pingTaskHandler, err := pkghandler.NewPingTaskHandler(ctx, cr)
 	if err != nil {
 		log.Fatalf("Failed to create ping task handler: %v", err)
@@ -59,13 +50,37 @@ func main() {
 	muxer.Handle("/conns", connsHandler)
 	muxer.Handle("/ping-task", pingTaskHandler)
 
-	server := http.Server{
-		Handler: pkghandler.NewWithCORSHandler(muxer),
+	certPool, err := x509.SystemCertPool()
+	if err != nil {
+		log.Fatalf("Failed to get system cert pool: %v", err)
+	}
+	tlsConfig := &tls.Config{
+		ClientAuth:         tls.RequireAndVerifyClientCert,
+		ClientCAs:          certPool,
+		InsecureSkipVerify: false,
+	}
+	if hubCmd.PeerCAs != nil {
+		customCAs := x509.NewCertPool()
+		for _, ca := range hubCmd.PeerCAs {
+			log.Printf("Appending CA file to the trust list: %s", ca)
+			caData, err := os.ReadFile(ca)
+			if err != nil {
+				log.Fatalf("Failed to read CA file %s: %v", ca, err)
+			}
+			customCAs.AppendCertsFromPEM(caData)
+		}
+		tlsConfig.ClientCAs = customCAs
 	}
 
-	listener, err := net.Listen("tcp", *addr)
+	server := http.Server{
+		Handler:   pkghandler.NewWithCORSHandler(muxer),
+		TLSConfig: tlsConfig,
+	}
+
+	addr := hubCmd.Address
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		log.Fatalf("Failed to listen on address %s: %v", *addr, err)
+		log.Fatalf("Failed to listen on address %s: %v", addr, err)
 	}
 	log.Printf("Listening on %s", listener.Addr())
 
@@ -92,4 +107,15 @@ func main() {
 		log.Printf("Failed to shutdown server: %v", err)
 	}
 	log.Println("Server shut down successfully")
+	return nil
+}
+
+var CLI struct {
+	Hub HubCmd
+}
+
+func main() {
+	ctx := kong.Parse(&CLI)
+	err := ctx.Run()
+	ctx.FatalIfErrorf(err)
 }
