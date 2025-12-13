@@ -24,6 +24,8 @@ const (
 )
 
 type NodeRegistrationAgent struct {
+	ClientCert     string
+	ClientCertKey  string
 	ServerAddress  string
 	NodeName       string
 	CorrelationID  *string
@@ -142,6 +144,17 @@ func (agent *NodeRegistrationAgent) doRun(ctx context.Context) error {
 		}
 		if agent.CustomCertPool != nil {
 			tlsConfig.RootCAs = agent.CustomCertPool
+		}
+		if agent.ClientCert != "" && agent.ClientCertKey != "" {
+			cert, err := tls.LoadX509KeyPair(agent.ClientCert, agent.ClientCertKey)
+			if err != nil {
+				errCh <- fmt.Errorf("failed to load client certificate: %v", err)
+				return
+			}
+			if tlsConfig.Certificates == nil {
+				tlsConfig.Certificates = make([]tls.Certificate, 0)
+			}
+			tlsConfig.Certificates = append(tlsConfig.Certificates, cert)
 		}
 
 		dialer := &websocket.Dialer{

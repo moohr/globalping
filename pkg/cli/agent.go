@@ -26,13 +26,22 @@ import (
 )
 
 type AgentCmd struct {
-	NodeName      string `help:"Nodename to advertise to the hub"`
+	NodeName      string `help:"Nodename to advertise to the hub, leave it empty for not advertising itself to the hub"`
 	HttpEndpoint  string `help:"HTTP endpoint to advertise to the hub"`
 	ServerAddress string `help:"WebSocket Address of the hub" default:"wss://localhost:8080/ws"`
 
-	PeerCAs     []string `help:"PeerCAs are custom CAs use to verify the hub (server)'s certificate, if none is provided, will use the system CAs to do so. PeerCAs are also use to verify the client's certificate when functioning as a server." type:"path"`
-	ServerName  string   `help:"Also use to verify the server's certificate" default:"traceroute"`
-	ClientCerts []string `help:"When connecting to the hub(the server), authenticate ourselves to the server" type:"path"`
+	// PeerCAs are use to verify certs presented by the peer,
+	// For agent, the peer is the hub, for hub, the peer is the agent.
+	// Simply put, PeerCAs are what agent is use to verify the hub's cert, and what hub is use to verify the agent's cert.
+	PeerCAs []string `help:"PeerCAs are custom CAs use to verify the hub (server)'s certificate, if none is provided, will use the system CAs to do so. PeerCAs are also use to verify the client's certificate when functioning as a server." type:"path"`
+
+	// Agent will connect to the hub (sometimes), so this is the TLS name (mostly CN field or DNS Alt Name) of the hub.
+	ServerName string `help:"Also use to verify the server's certificate" default:"traceroute"`
+
+	// When the agent is connecting to the hub, the hub needs to authenticate the client, so the client (the agent) also have to present a cert
+	// to complete the m-TLS authentication process.
+	ClientCert    string `help:"The path to the client certificate" type:"path"`
+	ClientCertKey string `help:"The path to the client certificate key" type:"path"`
 
 	// Agent also functions as a server (i.e. provides public tls-secured endpoint, so it might also needs a cert pair)
 	ServerCert    string `help:"The path to the server certificate" type:"path"`
@@ -180,7 +189,7 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	dstPtr, err := selectDstIP(ctx, resolver, pingRequest.Destination, pingRequest.PreferV4, pingRequest.PreferV6)
+	dstPtr, err := pkgutils.SelectDstIP(ctx, resolver, pingRequest.Destination, pingRequest.PreferV4, pingRequest.PreferV6)
 	if err != nil {
 		json.NewEncoder(w).Encode(pkgutils.ErrorResponse{Error: err.Error()})
 		return
@@ -301,25 +310,6 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func selectDstIP(ctx context.Context, resolver *net.Resolver, host string, preferV4 *bool, preferV6 *bool) (*net.IPAddr, error) {
-	familyPrefer := "ip"
-	if preferV6 != nil && *preferV6 {
-		familyPrefer = "ip6"
-	} else if preferV4 != nil && *preferV4 {
-		familyPrefer = "ip4"
-	}
-	ips, err := resolver.LookupIP(ctx, familyPrefer, host)
-	if err != nil {
-		return nil, fmt.Errorf("failed to lookup IP: %v", err)
-	}
-
-	if len(ips) == 0 {
-		return nil, fmt.Errorf("no IP found for host: %s", host)
-	}
-	dst := net.IPAddr{IP: ips[0]}
-	return &dst, nil
-}
-
 func (agentCmd *AgentCmd) Run() error {
 
 	ctx := context.TODO()
@@ -407,41 +397,48 @@ func (agentCmd *AgentCmd) Run() error {
 		}()
 	}()
 
-	attributes := make(pkgconnreg.ConnectionAttributes)
-	attributes[pkgnodereg.AttributeKeyPingCapability] = "true"
-	attributes[pkgnodereg.AttributeKeyNodeName] = agentCmd.NodeName
-	attributes[pkgnodereg.AttributeKeyHttpEndpoint] = agentCmd.HttpEndpoint
-	agent := pkgnodereg.NodeRegistrationAgent{
-		ServerAddress: agentCmd.ServerAddress,
-		NodeName:      agentCmd.NodeName,
+	if agentCmd.NodeName != "" {
+		log.Printf("Will advertise self as: %s endpoint: %s hub: %s", agentCmd.NodeName, agentCmd.HttpEndpoint, agentCmd.ServerAddress)
+		attributes := make(pkgconnreg.ConnectionAttributes)
+		attributes[pkgnodereg.AttributeKeyPingCapability] = "true"
+		attributes[pkgnodereg.AttributeKeyNodeName] = agentCmd.NodeName
+		attributes[pkgnodereg.AttributeKeyHttpEndpoint] = agentCmd.HttpEndpoint
+		agent := pkgnodereg.NodeRegistrationAgent{
+			ServerAddress: agentCmd.ServerAddress,
+			NodeName:      agentCmd.NodeName,
+			ClientCert:    agentCmd.ClientCert,
+			ClientCertKey: agentCmd.ClientCertKey,
+		}
+		agent.NodeAttributes = attributes
+		log.Println("Node attributes will be announced as:", attributes)
+
+		log.Println("Initializing node registration agent...")
+		if err = agent.Init(); err != nil {
+			log.Fatalf("Failed to initialize agent: %v", err)
+		}
+
+		log.Println("Starting node registration agent...")
+
+		agent.CustomCertPool = customCAs
+		agent.ServerName = agentCmd.ServerName
+		go func() {
+			nodeRegAgentErrCh := agent.Run(ctx)
+			if err := <-nodeRegAgentErrCh; err != nil {
+				log.Fatalf("failed to run node registration agent: %v", err)
+			}
+		}()
 	}
-	agent.NodeAttributes = attributes
-	log.Println("Node attributes will be announced as:", attributes)
-
-	log.Println("Initializing node registration agent...")
-	if err = agent.Init(); err != nil {
-		log.Fatalf("Failed to initialize agent: %v", err)
-	}
-
-	log.Println("Starting node registration agent...")
-
-	agent.CustomCertPool = customCAs
-	agent.ServerName = agentCmd.ServerName
-	nodeRegAgentErrCh := agent.Run(ctx)
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigs
 	log.Printf("Received signal: %v, exiting...", sig.String())
 	cancel()
+
 	err = <-tsSchedRunerr
 	if err != nil {
 		log.Fatalf("failed to run time sliced event loop scheduler: %v", err)
 	}
 
-	err = <-nodeRegAgentErrCh
-	if err != nil {
-		log.Fatalf("failed to run node registration agent: %v", err)
-	}
 	return nil
 }
