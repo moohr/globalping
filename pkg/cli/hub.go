@@ -65,7 +65,7 @@ func (hubCmd HubCmd) Run() error {
 	if hubCmd.ClientCert != "" && hubCmd.ClientCertKey != "" {
 		cert, err := tls.LoadX509KeyPair(hubCmd.ClientCert, hubCmd.ClientCertKey)
 		if err != nil {
-			log.Fatalf("Failed to load server certificate: %v", err)
+			log.Fatalf("Failed to load client certificate: %v", err)
 		}
 		if clientTLSConfig.Certificates == nil {
 			clientTLSConfig.Certificates = make([]tls.Certificate, 0)
