@@ -75,6 +75,10 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ProxyHub:    ph.hub,
 	})
 	for ev := range pinger.Ping(ctx) {
+		if ev.Error != nil {
+			errStr := ev.Error.Error()
+			ev.Err = &errStr
+		}
 		json.NewEncoder(w).Encode(ev)
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()

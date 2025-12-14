@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"log"
+	"fmt"
 	"net/http"
 	"net/url"
 )
@@ -19,13 +19,12 @@ type SimpleRemotePinger struct {
 func (sp *SimpleRemotePinger) Ping(ctx context.Context) <-chan PingEvent {
 	evChan := make(chan PingEvent)
 	go func() {
-		vals := sp.Request.ToURLValues()
 		urlObj, err := url.Parse(sp.Endpoint)
 		if err != nil {
 			evChan <- PingEvent{Error: err}
 			return
 		}
-		urlObj.RawQuery = vals.Encode()
+		urlObj.RawQuery = sp.Request.ToURLValues().Encode()
 
 		client := &http.Client{}
 		if sp.ClientTLSConfig != nil {
@@ -55,10 +54,12 @@ func (sp *SimpleRemotePinger) Ping(ctx context.Context) <-chan PingEvent {
 			}
 
 			line := scanner.Bytes()
-			log.Printf("[DBG] Scan line: %s", string(line))
 
 			pingEVObj := new(PingEvent)
 			if err := json.Unmarshal(line, pingEVObj); err != nil {
+				if pingEVObj.Err != nil {
+					pingEVObj.Error = fmt.Errorf("%s", *pingEVObj.Err)
+				}
 				evChan <- PingEvent{Error: err}
 				return
 			}

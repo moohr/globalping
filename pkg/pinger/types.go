@@ -10,7 +10,8 @@ import (
 type PingEvent struct {
 	Data     interface{}       `json:"data,omitempty"`
 	Metadata map[string]string `json:"metadata,omitempty"`
-	Error    error             `json:"error,omitempty"`
+	Error    error             `json:"-"`
+	Err      *string           `json:"err,omitempty"`
 }
 
 const MetadataKeyFrom = "from"
