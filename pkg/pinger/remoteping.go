@@ -19,6 +19,8 @@ type SimpleRemotePinger struct {
 func (sp *SimpleRemotePinger) Ping(ctx context.Context) <-chan PingEvent {
 	evChan := make(chan PingEvent)
 	go func() {
+		defer close(evChan)
+
 		urlObj, err := url.Parse(sp.Endpoint)
 		if err != nil {
 			evChan <- PingEvent{Error: err}

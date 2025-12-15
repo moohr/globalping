@@ -69,6 +69,7 @@ func (wmp *withMetadataPinger) Ping(ctx context.Context) <-chan pkgpinger.PingEv
 	wrappedCh := make(chan pkgpinger.PingEvent)
 	go func() {
 		defer close(wrappedCh)
+
 		for ev := range wmp.origin.Ping(ctx) {
 			wrappedEv := new(pkgpinger.PingEvent)
 			*wrappedEv = ev

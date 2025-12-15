@@ -57,7 +57,7 @@ func (hubCmd HubCmd) Run() error {
 	connsHandler := pkghandler.NewConnsHandler(cr)
 	var clientTLSConfig *tls.Config = &tls.Config{}
 	if customCAs != nil {
-		clientTLSConfig.ClientCAs = customCAs
+		clientTLSConfig.RootCAs = customCAs
 	}
 	if hubCmd.ClientCert != "" && hubCmd.ClientCertKey != "" {
 		cert, err := tls.LoadX509KeyPair(hubCmd.ClientCert, hubCmd.ClientCertKey)
