@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
 	pkghandler "example.com/rbmq-demo/pkg/handler"
@@ -18,8 +17,6 @@ import (
 )
 
 var upgrader = websocket.Upgrader{}
-
-const serverShutdownTimeout = 30 * time.Second
 
 type HubCmd struct {
 	PeerCAs       []string `help:"A list of path to the CAs use to verify peer certificates, can be specified multiple times" type:"path"`
@@ -129,18 +126,15 @@ func (hubCmd HubCmd) Run() error {
 		}
 	}()
 
-	<-sigs
-	log.Println("Shutting down safe map...")
+	sig := <-sigs
+	log.Printf("Received %s, shutting down ...", sig.String())
 	sm.Close()
-	log.Println("Safe map shut down successfully")
 
 	log.Println("Shutting down server...")
-	ctx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
-	defer cancel()
-	err = server.Shutdown(ctx)
+	err = server.Shutdown(context.TODO())
 	if err != nil {
 		log.Printf("Failed to shutdown server: %v", err)
 	}
-	log.Println("Server shut down successfully")
+
 	return nil
 }

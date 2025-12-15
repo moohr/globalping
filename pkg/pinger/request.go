@@ -130,7 +130,10 @@ func ParseSimplePingRequest(r *http.Request) (*SimplePingRequest, error) {
 
 	destination := r.URL.Query().Get(ParamDestination)
 	if destination == "" {
-		return nil, fmt.Errorf("destination is required")
+		if len(result.Targets) == 0 {
+			return nil, fmt.Errorf("destination is required")
+		}
+		destination = result.Targets[0]
 	}
 	result.Destination = destination
 

@@ -8,7 +8,7 @@ cd $script_dir/..
 
 bin/globalping agent \
   --node-name=agent1 \
-  --http-endpoint=https://agent1.example.com:8081 \
+  --http-endpoint=https://agent1.example.com:8081/simpleping \
   --peer-c-as=certs/ca.pem \
   --server-name=hub.example.com \
   --client-cert=certs/agent1.pem \
