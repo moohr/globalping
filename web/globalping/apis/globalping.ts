@@ -32,12 +32,28 @@ export async function getCurrentPingers(): Promise<string[]> {
     });
 }
 
+// A stream source is said to adaptable if it is convertible to a PingSample stream.
 export type PingSample = {
+  // the node name where the icmp echo request is originated from, it's mostly just a label, not something that is pingable
   from: string;
+
+  // the destination of the icmp echo request, in dns un-resolved form
   target: string;
 
   // in the unit of milliseconds
   latencyMs: number;
+
+  // the ttl of the sent packet
+  ttl?: number | null;
+
+  // the seq of the sent packet
+  seq?: number | null;
+
+  // the address of the peer, could be the original destination, or some middlebox halfway
+  peer?: string;
+
+  // the rdns of the peer, not necessarily available
+  peerRdns?: string;
 };
 
 export function generateFakePingSampleStream(
@@ -82,20 +98,47 @@ export function generateFakePingSampleStream(
   });
 }
 
-type PingEvent = {
-  type?: "pkt_recv" | "ping_stats";
-  data?: {
-    target?: string;
-    rtt?: number;
-    min_rtt?: number;
-    max_rtt?: number;
-    avg_rtt?: number;
-  };
-  metadata?: {
-    from?: string;
-    // target could also be here, not just in the data field
-    target?: string;
-  };
+export type ISO8601Timestamp = string;
+
+type RawPingEventICMPReply = {
+  ICMPTypeV4?: number;
+  ICMPTypeV6?: number;
+  ID?: number;
+  Peer?: string;
+  PeerRDNS?: string[];
+  ReceivedAt?: ISO8601Timestamp;
+
+  // Seq of the reply packet
+  Seq?: number;
+  // size of icmp, without the ip(v4/v6) header
+  Size?: number;
+  // TTl of the reply packet
+  TTL?: number;
+}
+
+type RawPingEventData = {
+  RTTMilliSecs?: number[];
+  RTTNanoSecs?: number[];
+  Raw?: RawPingEventICMPReply[];
+  ReceivedAt?: ISO8601Timestamp[];
+  SentAt?: ISO8601Timestamp;
+
+  // Seq of the sent packet
+  Seq?: number;
+
+  // TTL of the sent packet
+  TTL?: number;
+}
+
+type RawPingEventMetadata = {
+  from?: string;
+  target?: string;
+}
+
+// Raw event returned by the API
+type RawPingEvent = {
+  data?: RawPingEventData;
+  metadata?: RawPingEventMetadata;
 };
 
 type TokenObject = {
@@ -120,7 +163,6 @@ class LineTokenizer extends TransformStream<string, TokenObject> {
 
           const cleanLine = line.endsWith("\r") ? line.slice(0, -1) : line;
 
-          console.log("[dbg] enqueueing line:", cleanLine);
           controller.enqueue({ content: cleanLine });
 
           buffer = buffer.slice(newlineIndex + 1);
@@ -157,11 +199,11 @@ class JSONLineDecoder extends TransformStream<TokenObject, unknown> {
   }
 }
 
-class PingEventAdapter extends TransformStream<PingEvent, PingSample> {
+class PingEventAdapter extends TransformStream<RawPingEvent, PingSample> {
   constructor() {
     super({
       transform(
-        chunk: PingEvent,
+        chunk: RawPingEvent,
         controller: TransformStreamDefaultController<PingSample>
       ) {
         const maybeSample = pingSampleFromEvent(chunk);
@@ -173,19 +215,29 @@ class PingEventAdapter extends TransformStream<PingEvent, PingSample> {
   }
 }
 
-function pingSampleFromEvent(event: PingEvent): PingSample | undefined {
-  if (event.type === "pkt_recv") {
-    return {
-      from: event.metadata?.from || "",
-      target: event.data?.target || event.metadata?.target || "",
-      latencyMs: event.data?.rtt ?? 0,
-    };
-  } else if (event.type === "ping_stats") {
-    return {
-      from: event.metadata?.from || "",
-      target: event.data?.target || event.metadata?.target || "",
-      latencyMs: event.data?.rtt ?? event.data?.avg_rtt ?? 0,
-    };
+function pingSampleFromEvent(event: RawPingEvent): PingSample | undefined {
+  const from = event.metadata?.from || "";
+  const target = event.metadata?.target || "";
+  const latencies = event.data?.RTTNanoSecs
+  const latencyMs = latencies && latencies.length > 0 ? latencies[latencies.length-1]/1000000 : -1;
+  if (latencyMs < 0) {
+    return undefined;
+  }
+  const ttl = event.data?.TTL;
+  const seq = event.data?.Seq;
+  const raws = event.data?.Raw;
+  const peer = raws && raws.length > 0 ? raws[raws.length-1].Peer : undefined;
+  const peerRdns = raws && raws.length > 0 ? raws[raws.length-1].PeerRDNS : undefined;
+  const peerRdnsLast = peerRdns && peerRdns.length > 0 ? peerRdns[peerRdns.length-1] : undefined;
+
+  return {
+    from: from,
+    target: target,
+    latencyMs: latencyMs,
+    ttl: ttl,
+    seq: seq,
+    peer: peer,
+    peerRdns: peerRdnsLast,
   }
 }
 
