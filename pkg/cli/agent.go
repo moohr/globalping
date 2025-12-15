@@ -66,9 +66,7 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	pingReqJSB, _ := json.Marshal(pingRequest)
 	log.Printf("Started ping request for %s: %s", pkgutils.GetRemoteAddr(r), string(pingReqJSB))
-
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
+	ctx := r.Context()
 
 	pinger := pkgpinger.NewSimplePinger(pkgpinger.SimplePingerConfig{
 		PingRequest: pingRequest,
@@ -84,6 +82,7 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+	log.Println("[DBG] Ping request completed")
 }
 
 func (agentCmd *AgentCmd) Run() error {

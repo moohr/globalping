@@ -34,6 +34,7 @@ func NewSimplePinger(cfg SimplePingerConfig) *SimplePinger {
 func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 	outputEVChan := make(chan PingEvent)
 	go func() {
+		defer close(outputEVChan)
 
 		ph := sp.proxyHub
 		pingRequest := sp.pingRequest
@@ -186,12 +187,12 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 				throttleProxySrc <- req
 
 				if pingRequest.TotalPkts != nil && numPktsSent >= *pingRequest.TotalPkts {
-					break
+					log.Println("[DBG] Limit reached, stopping ping")
+					return
 				}
 				<-time.After(time.Duration(pingRequest.IntvMilliseconds) * time.Millisecond)
 			}
 		}
-
 	}()
 	return outputEVChan
 }
