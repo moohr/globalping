@@ -12,12 +12,14 @@ import (
 )
 
 type ICMPTrackerEntry struct {
-	Seq        int
-	TTL        int
-	SentAt     time.Time
-	ReceivedAt []time.Time
-	Timer      *time.Timer `json:"-"`
-	Raw        []interface{}
+	Seq          int
+	TTL          int
+	RTTNanoSecs  []int64
+	RTTMilliSecs []int64
+	SentAt       time.Time
+	ReceivedAt   []time.Time
+	Timer        *time.Timer `json:"-"`
+	Raw          []interface{}
 }
 
 func (itEnt *ICMPTrackerEntry) ReadonlyClone() *ICMPTrackerEntry {
@@ -47,18 +49,6 @@ func (itEnt *ICMPTrackerEntry) HasDup() bool {
 		return false
 	}
 	return len(itEnt.ReceivedAt) > 1
-}
-
-func (itEnt *ICMPTrackerEntry) RTTs() []time.Duration {
-	if itEnt == nil {
-		return nil
-	}
-
-	deltas := make([]time.Duration, 0)
-	for _, receivedAt := range itEnt.ReceivedAt {
-		deltas = append(deltas, receivedAt.Sub(itEnt.SentAt))
-	}
-	return deltas
 }
 
 type ServiceRequest struct {
@@ -222,8 +212,10 @@ func (it *ICMPTracker) MarkReceived(seq int, raw interface{}) error {
 				ent.Timer.Stop()
 				ent.Timer = nil
 			}
-			ent.ReceivedAt = append(ent.ReceivedAt, time.Now())
 			ent.Raw = append(ent.Raw, raw)
+			ent.ReceivedAt = append(ent.ReceivedAt, time.Now())
+			ent.RTTNanoSecs = append(ent.RTTNanoSecs, time.Since(ent.SentAt).Nanoseconds())
+			ent.RTTMilliSecs = append(ent.RTTMilliSecs, time.Since(ent.SentAt).Milliseconds())
 			if clone := ent.ReadonlyClone(); clone != nil {
 				go func(ent ICMPTrackerEntry) {
 					it.RecvEvC <- ent
