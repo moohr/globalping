@@ -138,7 +138,9 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 							log.Printf("failed to read from connection: %v", err)
 							break
 						}
-						receiveMsg, err := icmp.ParseMessage(ipv4.ICMPTypeEchoReply.Protocol(), rb[:nBytes])
+
+						// 1 is the ICMPv4 protocol number in IP header's protocol field
+						receiveMsg, err := icmp.ParseMessage(1, rb[:nBytes])
 						if err != nil {
 							log.Fatalf("failed to parse icmp message: %v", err)
 						}
@@ -153,23 +155,14 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 							Seq:        -1, // if can't determine, use -1
 						}
 
-						icmpBody, ok := receiveMsg.Body.(*icmp.Echo)
-						if !ok {
-							log.Printf("failed to parse icmp body: %+v", receiveMsg)
-							continue
-						}
-
-						if icmpBody.ID != icmp4tr.id {
-							// silently ignore the message that is not for us
-							continue
-						}
-
-						replyObject.Seq = icmpBody.Seq
 						var ty ipv4.ICMPType
 
 						switch receiveMsg.Type {
 						case ipv4.ICMPTypeTimeExceeded:
-							ty = ipv4.ICMPTypeTimeExceeded
+							// task & hints:
+							// 1. `receiveMsg.Body` is now the origin IP header plus the origin ICMP message
+							// 2. extract the origin SEQ and ID field from the origin ICMP echo message.
+
 							replyObject.ICMPTypeV4 = &ty
 						case ipv4.ICMPTypeEchoReply:
 							ty = ipv4.ICMPTypeEchoReply
@@ -306,7 +299,9 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) error {
 							log.Printf("failed to read from connection: %v", err)
 							break
 						}
-						receiveMsg, err := icmp.ParseMessage(ipv6.ICMPTypeEchoReply.Protocol(), rb[:nBytes])
+
+						// 58 is the ICMPv6 protocol number in IPv6 header's protocol field
+						receiveMsg, err := icmp.ParseMessage(58, rb[:nBytes])
 						if err != nil {
 							log.Fatalf("failed to parse icmp message: %v", err)
 						}
