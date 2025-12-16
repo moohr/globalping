@@ -54,7 +54,8 @@ type ICMPReceiveReply struct {
 	ICMPTypeV4 *ipv4.ICMPType
 	ICMPTypeV6 *ipv6.ICMPType
 
-	SetMTUTo *int
+	SetMTUTo            *int
+	ShrinkICMPPayloadTo *int `json:"-"`
 }
 
 func (icmpReply *ICMPReceiveReply) ResolveRDNS(ctx context.Context, resolver *net.Resolver) (*ICMPReceiveReply, error) {
@@ -199,6 +200,14 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 							ipHeaderLen := int(dstUnreachBody.Data[0]&0x0F) * 4
 							if ipHeaderLen < 20 {
 								ipHeaderLen = 20
+							}
+							if replyObject.SetMTUTo != nil {
+								newMTU := *replyObject.SetMTUTo
+								shrinkTo := newMTU - ipHeaderLen - mimICMPHeaderSize
+								if shrinkTo < 0 {
+									shrinkTo = 0
+								}
+								replyObject.ShrinkICMPPayloadTo = &shrinkTo
 							}
 
 							if len(dstUnreachBody.Data) < ipHeaderLen+mimICMPHeaderSize {
@@ -442,6 +451,11 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) error {
 							// Extract MTU from PacketTooBig message
 							mtu := packetTooBigBody.MTU
 							replyObject.SetMTUTo = &mtu
+							shrinkTo := mtu - ipv6HeaderLen - mimICMPHeaderSize
+							if shrinkTo < 0 {
+								shrinkTo = 0
+							}
+							replyObject.ShrinkICMPPayloadTo = &shrinkTo
 
 							// Extract original ICMP message from PacketTooBig body
 							if len(packetTooBigBody.Data) < ipv6HeaderLen+mimICMPHeaderSize {
