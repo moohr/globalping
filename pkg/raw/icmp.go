@@ -52,6 +52,8 @@ type ICMPReceiveReply struct {
 
 	ICMPTypeV4 *ipv4.ICMPType
 	ICMPTypeV6 *ipv6.ICMPType
+
+	SetMTUTo *int
 }
 
 func (icmpReply *ICMPReceiveReply) ResolveRDNS(ctx context.Context, resolver *net.Resolver) (*ICMPReceiveReply, error) {
@@ -171,6 +173,54 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 						var ty ipv4.ICMPType
 
 						switch receiveMsg.Type {
+						case ipv4.ICMPTypeDestinationUnreachable:
+							ty = ipv4.ICMPTypeDestinationUnreachable
+							dstUnreachBody, ok := receiveMsg.Body.(*icmp.DstUnreach)
+							if !ok {
+								log.Printf("Invalid ICMP Destination Unreachable body: %+v", receiveMsg)
+								continue
+							}
+
+							// Check if it's Code 4 (Fragmentation Needed / Packet Too Big)
+							// The MTU is stored in bytes 6-7 of the ICMP message header (big-endian)
+							if receiveMsg.Code == 4 && nBytes >= 8 {
+								mtu := int(rb[6])<<8 | int(rb[7])
+								replyObject.SetMTUTo = &mtu
+							}
+
+							// Extract original ICMP message from Destination Unreachable body
+							if len(dstUnreachBody.Data) < ipv4HeaderLen+mimICMPHeaderSize {
+								log.Printf("Invalid ICMP Destination Unreachable body: %+v", receiveMsg)
+								continue
+							}
+
+							// Skip IP header (minimum 20 bytes, but check IHL field for actual length)
+							ipHeaderLen := int(dstUnreachBody.Data[0]&0x0F) * 4
+							if ipHeaderLen < 20 {
+								ipHeaderLen = 20
+							}
+
+							if len(dstUnreachBody.Data) < ipHeaderLen+mimICMPHeaderSize {
+								log.Printf("Invalid ICMP Destination Unreachable message: %+v", receiveMsg)
+								continue
+							}
+
+							// Parse the original ICMP message (protocol 1 for ICMP)
+							originalICMPData := dstUnreachBody.Data[ipHeaderLen:]
+							originalICMPMsg, err := icmp.ParseMessage(protocolNumberICMPv4, originalICMPData)
+							if err != nil {
+								log.Printf("Invalid ICMP Destination Unreachable message: %+v error: %+v", receiveMsg, err)
+								continue
+							}
+
+							echoBody, ok := originalICMPMsg.Body.(*icmp.Echo)
+							if !ok {
+								log.Printf("Invalid ICMP Destination Unreachable message: %+v", receiveMsg)
+								continue
+							}
+
+							replyObject.Seq = echoBody.Seq
+							replyObject.ID = echoBody.ID
 						case ipv4.ICMPTypeTimeExceeded:
 							ty = ipv4.ICMPTypeTimeExceeded
 
@@ -333,6 +383,7 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) error {
 		f.SetAll(true)
 		f.Accept(ipv6.ICMPTypeTimeExceeded)
 		f.Accept(ipv6.ICMPTypeEchoReply)
+		f.Accept(ipv6.ICMPTypePacketTooBig)
 		if err := icmp6tr.ipv6PacketConn.SetICMPFilter(&f); err != nil {
 			log.Fatal(err)
 		}
@@ -378,6 +429,40 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) error {
 						var ty ipv6.ICMPType
 
 						switch receiveMsg.Type {
+						case ipv6.ICMPTypePacketTooBig:
+							ty = ipv6.ICMPTypePacketTooBig
+							packetTooBigBody, ok := receiveMsg.Body.(*icmp.PacketTooBig)
+							if !ok {
+								log.Printf("Invalid ICMP Packet Too Big body: %+v", receiveMsg)
+								continue
+							}
+
+							// Extract MTU from PacketTooBig message
+							mtu := packetTooBigBody.MTU
+							replyObject.SetMTUTo = &mtu
+
+							// Extract original ICMP message from PacketTooBig body
+							if len(packetTooBigBody.Data) < ipv6HeaderLen+mimICMPHeaderSize {
+								log.Printf("Invalid ICMP Packet Too Big body: %+v", receiveMsg)
+								continue
+							}
+
+							// Skip IPv6 header (fixed 40 bytes)
+							originalICMPData := packetTooBigBody.Data[ipv6HeaderLen:]
+							originalICMPMsg, err := icmp.ParseMessage(protocolNumberICMPv6, originalICMPData)
+							if err != nil {
+								log.Printf("Invalid ICMP Packet Too Big message: %+v error: %+v", receiveMsg, err)
+								continue
+							}
+
+							echoBody, ok := originalICMPMsg.Body.(*icmp.Echo)
+							if !ok {
+								log.Printf("Invalid ICMP Packet Too Big message: %+v", receiveMsg)
+								continue
+							}
+
+							replyObject.Seq = echoBody.Seq
+							replyObject.ID = echoBody.ID
 						case ipv6.ICMPTypeTimeExceeded:
 							ty = ipv6.ICMPTypeTimeExceeded
 
