@@ -134,7 +134,6 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 
 				if wrappedEV.IsFromLastHop(dst) {
 					if autoTTL, ok := pingRequest.TTL.(*AutoTTL); ok {
-						log.Printf("[DBG] ICMP reply from last hop, resetting auto TTL")
 						autoTTL.Reset()
 					}
 				}
@@ -167,7 +166,6 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 		}()
 
 		senderCh := transceiver.GetSender()
-		defer close(senderCh)
 
 		numPktsSent := 0
 		for {
@@ -176,6 +174,7 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 				return
 			default:
 				ttl := pingRequest.TTL.GetNext()
+
 				req := pkgraw.ICMPSendRequest{
 					Seq: numPktsSent + 1,
 					TTL: ttl,

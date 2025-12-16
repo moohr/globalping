@@ -20,7 +20,7 @@ type ICMPTrackerEntry struct {
 	SentAt       time.Time
 	ReceivedAt   []time.Time
 	Timer        *time.Timer `json:"-"`
-	Raw          []interface{}
+	Raw          []ICMPReceiveReply
 }
 
 func (itEnt *ICMPTrackerEntry) IsFromLastHop(dst net.IPAddr) bool {
@@ -28,11 +28,7 @@ func (itEnt *ICMPTrackerEntry) IsFromLastHop(dst net.IPAddr) bool {
 		return false
 	}
 
-	for _, raw := range itEnt.Raw {
-		icmpReply, ok := raw.(ICMPReceiveReply)
-		if !ok {
-			continue
-		}
+	for _, icmpReply := range itEnt.Raw {
 
 		if icmpReply.PeerRawIP != nil && dst.IP.Equal(icmpReply.PeerRawIP.IP) {
 			return true
@@ -53,14 +49,13 @@ func (itEnt *ICMPTrackerEntry) IsFromLastHop(dst net.IPAddr) bool {
 func (itEnt *ICMPTrackerEntry) ResolveRDNS(ctx context.Context, resolver *net.Resolver) (*ICMPTrackerEntry, error) {
 	wrappedEV := new(ICMPTrackerEntry)
 	*wrappedEV = *itEnt
-	wrappedEV.Raw = make([]interface{}, 0)
-	for _, raw := range itEnt.Raw {
-		if icmpReply, ok := raw.(ICMPReceiveReply); ok {
-			clonedICMPReply, _ := icmpReply.ResolveRDNS(ctx, resolver)
-			wrappedEV.Raw = append(wrappedEV.Raw, clonedICMPReply)
-			continue
+	wrappedEV.Raw = make([]ICMPReceiveReply, 0)
+	for _, icmpReply := range itEnt.Raw {
+		clonedICMPReply, _ := icmpReply.ResolveRDNS(ctx, resolver)
+		if clonedICMPReply == nil {
+			panic("clonedICMPReply is nil")
 		}
-		wrappedEV.Raw = append(wrappedEV.Raw, raw)
+		wrappedEV.Raw = append(wrappedEV.Raw, *clonedICMPReply)
 	}
 
 	return wrappedEV, nil
@@ -76,7 +71,7 @@ func (itEnt *ICMPTrackerEntry) ReadonlyClone() *ICMPTrackerEntry {
 	newOne.Timer = nil
 	newOne.ReceivedAt = make([]time.Time, len(itEnt.ReceivedAt))
 	copy(newOne.ReceivedAt, itEnt.ReceivedAt)
-	newOne.Raw = make([]interface{}, len(itEnt.Raw))
+	newOne.Raw = make([]ICMPReceiveReply, len(itEnt.Raw))
 	copy(newOne.Raw, itEnt.Raw)
 	return newOne
 }
@@ -242,7 +237,7 @@ func (it *ICMPTracker) MarkSent(seq int, ttl int) error {
 	return <-resultCh
 }
 
-func (it *ICMPTracker) MarkReceived(seq int, raw interface{}) error {
+func (it *ICMPTracker) MarkReceived(seq int, raw ICMPReceiveReply) error {
 	requestCh, ok := <-it.serviceChan
 	if !ok {
 		// engine is already shutdown

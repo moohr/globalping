@@ -43,7 +43,7 @@ type ICMPReceiveReply struct {
 	// the Src of the icmp echo reply, in string
 	Peer string
 
-	PeerRaw net.Addr `json:"-"`
+	PeerRaw   net.Addr    `json:"-"`
 	PeerRawIP *net.IPAddr `json:"-"`
 
 	PeerRDNS []string
@@ -165,7 +165,6 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 							PeerRaw:    peerAddr,
 						}
 						if ipAddr, ok := peerAddr.(*net.IPAddr); ok {
-							log.Printf("[DBG] ICMP reply hint: peer raw net.Addr is a net.IPAddr")
 							replyObject.PeerRawIP = ipAddr
 						}
 
@@ -241,7 +240,11 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 				select {
 				case <-ctx.Done():
 					return
-				case req := <-icmp4tr.SendC:
+				case req, ok := <-icmp4tr.SendC:
+					if !ok {
+						return
+					}
+
 					wm.Body.(*icmp.Echo).Seq = req.Seq
 					wb, err := wm.Marshal(nil)
 					if err != nil {
@@ -249,7 +252,7 @@ func (icmp4tr *ICMP4Transceiver) Run(ctx context.Context) error {
 					}
 
 					if err := icmp4tr.ipv4PacketConn.SetTTL(req.TTL); err != nil {
-						log.Fatalf("failed to set TTL: %v", err)
+						log.Fatalf("failed to set TTL to %v: %v, req: %+v", req.TTL, err, req)
 					}
 
 					dst := req.Dst
@@ -438,7 +441,11 @@ func (icmp6tr *ICMP6Transceiver) Run(ctx context.Context) error {
 				select {
 				case <-ctx.Done():
 					return
-				case req := <-icmp6tr.SendC:
+				case req, ok := <-icmp6tr.SendC:
+					if !ok {
+						return
+					}
+
 					wm.Body.(*icmp.Echo).Seq = req.Seq
 					wb, err := wm.Marshal(nil)
 					if err != nil {
