@@ -249,5 +249,35 @@ func (pm *PayloadManager) Shrink(dstIP net.IPAddr, setMTUTo *int) {
 		return
 	}
 
-	// todo: decide appropriate new payload size
+	originalSize := len(pm.data)
+
+	// Header sizes
+	const ipv4HeaderLen = 20
+	const ipv6HeaderLen = 40
+	const icmpHeaderLen = 8
+
+	// Determine IP version and calculate maximum payload size
+	var maxPayloadSize int
+	if dstIP.IP.To4() != nil {
+		// IPv4: MTU - IP header - ICMP header
+		maxPayloadSize = *setMTUTo - ipv4HeaderLen - icmpHeaderLen
+	} else {
+		// IPv6: MTU - IP header - ICMP header
+		maxPayloadSize = *setMTUTo - ipv6HeaderLen - icmpHeaderLen
+	}
+
+	// Ensure we have a valid payload size (at least 0)
+	if maxPayloadSize < 0 {
+		maxPayloadSize = 0
+	}
+
+	// Only shrink if the new size is smaller than current size
+	currentSize := len(pm.data)
+	if maxPayloadSize >= currentSize {
+		return
+	}
+
+	// Simply resize the existing slice to the new size
+	pm.data = pm.data[:maxPayloadSize]
+	log.Printf("[DBG] Shrunk payload from %d to %d bytes, setMTUto=%d, dstIP=%s", originalSize, maxPayloadSize, *setMTUTo, dstIP.String())
 }
