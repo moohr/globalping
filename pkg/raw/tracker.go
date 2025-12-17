@@ -10,6 +10,8 @@ import (
 	"log"
 	"net"
 	"time"
+
+	pkgipinfo "example.com/rbmq-demo/pkg/ipinfo"
 )
 
 type ICMPTrackerEntry struct {
@@ -44,6 +46,24 @@ func (itEnt *ICMPTrackerEntry) IsFromLastHop(dst net.IPAddr) bool {
 	}
 
 	return false
+}
+
+func (itEnt *ICMPTrackerEntry) ResolveIPInfo(ctx context.Context, ipinfoAdapter pkgipinfo.GeneralIPInfoAdapter) (*ICMPTrackerEntry, error) {
+	wrappedEV := new(ICMPTrackerEntry)
+	*wrappedEV = *itEnt
+	wrappedEV.Raw = make([]ICMPReceiveReply, 0)
+	for _, icmpReply := range itEnt.Raw {
+		clonedICMPReply, err := icmpReply.ResolveIPInfo(ctx, ipinfoAdapter)
+		if err != nil {
+			return nil, err
+		}
+		if clonedICMPReply == nil {
+			panic("clonedICMPReply is nil")
+		}
+		wrappedEV.Raw = append(wrappedEV.Raw, *clonedICMPReply)
+	}
+
+	return wrappedEV, nil
 }
 
 func (itEnt *ICMPTrackerEntry) ResolveRDNS(ctx context.Context, resolver *net.Resolver) (*ICMPTrackerEntry, error) {

@@ -54,6 +54,14 @@ export type PingSample = {
 
   // the rdns of the peer, not necessarily available
   peerRdns?: string;
+
+  peerASN?: string;
+
+  peerLocation?: string;
+
+  peerISP?: string;
+
+  peerExactLocation?: number[]; // [latitude, longitude]
 };
 
 export function generateFakePingSampleStream(
@@ -106,6 +114,13 @@ type RawPingEventICMPReply = {
   ID?: number;
   Peer?: string;
   PeerRDNS?: string[];
+  PeerASN?: string;
+  PeerLocation?: string;
+  PeerISP?: string;
+
+  // [latitude, longitude]
+  PeerExactLocation?: number[];
+
   ReceivedAt?: ISO8601Timestamp;
 
   // Seq of the reply packet
@@ -244,6 +259,16 @@ function pingSampleFromEvent(event: RawPingEvent): PingSample | undefined {
     seq: seq,
     peer: peer,
     peerRdns: peerRdnsLast,
+    peerASN:
+      raws && raws.length > 0 ? raws[raws.length - 1].PeerASN : undefined,
+    peerLocation:
+      raws && raws.length > 0 ? raws[raws.length - 1].PeerLocation : undefined,
+    peerISP:
+      raws && raws.length > 0 ? raws[raws.length - 1].PeerISP : undefined,
+    peerExactLocation:
+      raws && raws.length > 0
+        ? raws[raws.length - 1].PeerExactLocation
+        : undefined,
   };
 }
 

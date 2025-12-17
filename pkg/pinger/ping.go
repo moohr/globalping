@@ -12,21 +12,25 @@ import (
 	"sync"
 	"time"
 
+	pkgipinfo "example.com/rbmq-demo/pkg/ipinfo"
 	pkgraw "example.com/rbmq-demo/pkg/raw"
 	pkgutils "example.com/rbmq-demo/pkg/utils"
 )
 
 type SimplePinger struct {
-	pingRequest *SimplePingRequest
+	pingRequest   *SimplePingRequest
+	ipinfoAdapter pkgipinfo.GeneralIPInfoAdapter
 }
 
 type SimplePingerConfig struct {
-	PingRequest *SimplePingRequest
+	PingRequest   *SimplePingRequest
+	IPInfoAdapter pkgipinfo.GeneralIPInfoAdapter
 }
 
 func NewSimplePinger(cfg SimplePingerConfig) *SimplePinger {
 	sp := new(SimplePinger)
 	sp.pingRequest = cfg.PingRequest
+	sp.ipinfoAdapter = cfg.IPInfoAdapter
 	return sp
 }
 
@@ -136,7 +140,16 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 		go func() {
 			for ev := range tracker.RecvEvC {
 				var wrappedEV *pkgraw.ICMPTrackerEntry = &ev
-				wrappedEV, _ = ev.ResolveRDNS(ctx, resolver)
+				wrappedEV, err = ev.ResolveRDNS(ctx, resolver)
+				if err != nil {
+					log.Printf("failed to resolve RDNS: %v", err)
+					err = nil
+				}
+				wrappedEV, err = wrappedEV.ResolveIPInfo(ctx, sp.ipinfoAdapter)
+				if err != nil {
+					log.Printf("failed to resolve IP info: %v", err)
+					err = nil
+				}
 
 				if wrappedEV.IsFromLastHop(dst) {
 					if autoTTL, ok := pingRequest.TTL.(*AutoTTL); ok {

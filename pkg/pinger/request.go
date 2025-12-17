@@ -25,6 +25,8 @@ type SimplePingRequest struct {
 	TTL                        TTLGenerator
 	RandomPayloadSize          *int
 	ResolveTimeoutMilliseconds *int
+	IPInfoProviderName         *string
+	IPInfoProviderParams       *string
 }
 
 const ParamTargets = "targets"
@@ -39,11 +41,20 @@ const ParamResolver = "resolver"
 const ParamRandomPayloadSize = "randomPayloadSize"
 const ParamDestination = "destination"
 const ParamResolveTimeoutMilliseconds = "resolveTimeoutMilliseconds"
+const ParamsIPInfoProviderName = "ipInfoProviderName"
+const ParamsIPInfoProviderParams = "ipInfoProviderParams"
 
 const defaultTTL = 64
 
 func ParseSimplePingRequest(r *http.Request) (*SimplePingRequest, error) {
 	result := new(SimplePingRequest)
+
+	if ipInfoProviderName := r.URL.Query().Get(ParamsIPInfoProviderName); ipInfoProviderName != "" {
+		result.IPInfoProviderName = &ipInfoProviderName
+	}
+	if ipInfoProviderParams := r.URL.Query().Get(ParamsIPInfoProviderParams); ipInfoProviderParams != "" {
+		result.IPInfoProviderParams = &ipInfoProviderParams
+	}
 
 	if randomPayloadSize := r.URL.Query().Get(ParamRandomPayloadSize); randomPayloadSize != "" {
 		randomPayloadSizeInt, err := strconv.Atoi(randomPayloadSize)
@@ -193,6 +204,12 @@ func (pr *SimplePingRequest) ToURLValues() url.Values {
 	}
 	if pr.RandomPayloadSize != nil {
 		vals.Add(ParamRandomPayloadSize, strconv.Itoa(*pr.RandomPayloadSize))
+	}
+	if pr.IPInfoProviderName != nil && *pr.IPInfoProviderName != "" {
+		vals.Add(ParamsIPInfoProviderName, *pr.IPInfoProviderName)
+	}
+	if pr.IPInfoProviderParams != nil && *pr.IPInfoProviderParams != "" {
+		vals.Add(ParamsIPInfoProviderParams, *pr.IPInfoProviderParams)
 	}
 
 	return vals

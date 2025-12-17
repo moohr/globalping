@@ -7,6 +7,7 @@ import (
 	"net"
 	"time"
 
+	pkgipinfo "example.com/rbmq-demo/pkg/ipinfo"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
@@ -57,6 +58,38 @@ type ICMPReceiveReply struct {
 
 	SetMTUTo            *int
 	ShrinkICMPPayloadTo *int `json:"-"`
+
+	// below are left for ip information provider
+	PeerASN      *string
+	PeerLocation *string
+	PeerISP      *string
+	// [latitude, longitude]
+	PeerExactLocation []float64
+}
+
+func (icmpReply *ICMPReceiveReply) ResolveIPInfo(ctx context.Context, ipinfoAdapter pkgipinfo.GeneralIPInfoAdapter) (*ICMPReceiveReply, error) {
+	clonedICMPReply := new(ICMPReceiveReply)
+	*clonedICMPReply = *icmpReply
+	ipInfo, err := ipinfoAdapter.GetIPInfo(ctx, clonedICMPReply.Peer)
+	if err != nil {
+		return nil, err
+	}
+	if ipInfo == nil {
+		return nil, nil
+	}
+	if ipInfo.ASN != "" {
+		clonedICMPReply.PeerASN = &ipInfo.ASN
+	}
+	if ipInfo.Location != "" {
+		clonedICMPReply.PeerLocation = &ipInfo.Location
+	}
+	if ipInfo.ISP != "" {
+		clonedICMPReply.PeerISP = &ipInfo.ISP
+	}
+	if ipInfo.ExactLocation != nil {
+		clonedICMPReply.PeerExactLocation = ipInfo.ExactLocation
+	}
+	return clonedICMPReply, nil
 }
 
 func (icmpReply *ICMPReceiveReply) ResolveRDNS(ctx context.Context, resolver *net.Resolver) (*ICMPReceiveReply, error) {

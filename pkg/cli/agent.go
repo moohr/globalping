@@ -15,6 +15,7 @@ import (
 	"time"
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
+	pkgipinfo "example.com/rbmq-demo/pkg/ipinfo"
 	pkgnodereg "example.com/rbmq-demo/pkg/nodereg"
 	pkgpinger "example.com/rbmq-demo/pkg/pinger"
 	pkgthrottle "example.com/rbmq-demo/pkg/throttle"
@@ -48,10 +49,12 @@ type AgentCmd struct {
 }
 
 type PingHandler struct {
+	ipinfoReg *pkgipinfo.IPInfoProviderRegistry
 }
 
-func NewPingHandler() *PingHandler {
+func NewPingHandler(ipinfoReg *pkgipinfo.IPInfoProviderRegistry) *PingHandler {
 	ph := new(PingHandler)
+	ph.ipinfoReg = ipinfoReg
 	return ph
 }
 
@@ -65,8 +68,26 @@ func (ph *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Started ping request for %s: %s", pkgutils.GetRemoteAddr(r), string(pingReqJSB))
 	ctx := r.Context()
 
+	var ipinfoAdapter pkgipinfo.GeneralIPInfoAdapter = nil
+	if pingRequest.IPInfoProviderName != nil && *pingRequest.IPInfoProviderName != "" {
+		ipinfoAdapter, err = ph.ipinfoReg.GetAdapter(*pingRequest.IPInfoProviderName)
+		if err != nil {
+			json.NewEncoder(w).Encode(pkgutils.ErrorResponse{Error: err.Error()})
+			return
+		}
+
+		if pingRequest.IPInfoProviderParams != nil && *pingRequest.IPInfoProviderParams != "" {
+			err = ipinfoAdapter.Configure(ctx, *pingRequest.IPInfoProviderParams)
+			if err != nil {
+				json.NewEncoder(w).Encode(pkgutils.ErrorResponse{Error: err.Error()})
+				return
+			}
+		}
+	}
+
 	pinger := pkgpinger.NewSimplePinger(pkgpinger.SimplePingerConfig{
-		PingRequest: pingRequest,
+		PingRequest:   pingRequest,
+		IPInfoAdapter: ipinfoAdapter,
 	})
 	for ev := range pinger.Ping(ctx) {
 		if ev.Error != nil {
@@ -86,6 +107,11 @@ func (agentCmd *AgentCmd) Run() error {
 	ctx := context.TODO()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	ipinfoReg := pkgipinfo.NewIPInfoProviderRegistry()
+	ipinfoReg.RegisterAdapter(pkgipinfo.NewIPInfoAdapter(nil))
+	ipinfoReg.RegisterAdapter(pkgipinfo.NewDN42IPInfoAdapter())
+	ipinfoReg.RegisterAdapter(pkgipinfo.NewRandomIPInfoAdapter())
 
 	var customCAs *x509.CertPool = nil
 	if agentCmd.PeerCAs != nil {
@@ -120,7 +146,7 @@ func (agentCmd *AgentCmd) Run() error {
 	smoother := pkgthrottle.NewBurstSmoother(time.Duration(1000.0/float64(agentCmd.SharedQuota)) * time.Millisecond)
 	smoother.Run()
 
-	handler := NewPingHandler()
+	handler := NewPingHandler(ipinfoReg)
 
 	muxer := http.NewServeMux()
 	muxer.Handle("/simpleping", handler)
