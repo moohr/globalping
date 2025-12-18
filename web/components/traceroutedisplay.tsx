@@ -154,6 +154,7 @@ function updateTabState(tabState: TabState, pingSample: PingSample): TabState {
       ),
     };
     if (pingSample.lastHop) {
+      console.log("[dbg] updating maxHop to", pingSample.ttl);
       newTabState.maxHop = pingSample.ttl;
     }
   }

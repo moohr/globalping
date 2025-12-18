@@ -154,11 +154,12 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 					}
 				}
 
-				if dst.IP != nil  {
+				if dst.IP != nil {
 					var foundLastHop bool
 					wrappedEV, foundLastHop = wrappedEV.MarkLastHop(dst)
 					if foundLastHop {
 						if autoTTL, ok := pingRequest.TTL.(*AutoTTL); ok {
+							log.Printf("[DBG] resetting auto TTL")
 							autoTTL.Reset()
 						}
 					}
