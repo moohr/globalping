@@ -59,6 +59,20 @@ type TabState = {
 };
 type PageState = Record<string, TabState>;
 
+function sortAndDedupPeers(
+  peers: TraceroutePeerEntry[]
+): TraceroutePeerEntry[] {
+  const sorted = [...peers].sort((a, b) => b.seq - a.seq);
+  const m = new Map<string, TraceroutePeerEntry>();
+  for (const peer of sorted) {
+    if (m.has(peer.ip.ip)) {
+      continue;
+    }
+    m.set(peer.ip.ip, peer);
+  }
+  return Array.from(m.values()).sort((a, b) => b.seq - a.seq);
+}
+
 function getMedian(history: number[]): number {
   if (history.length === 0) {
     return NaN;
@@ -104,7 +118,7 @@ function updateHopEntryState(
       location: pingSample.peerLocation,
       isp: pingSample.peerISP,
     };
-    newEntry.peers = [...newEntry.peers, newPeerEntry];
+    newEntry.peers = sortAndDedupPeers([...newEntry.peers, newPeerEntry]);
     // high seq first
     newEntry.peers.sort((a, b) => b.seq - a.seq);
   }
@@ -185,6 +199,25 @@ function getDispEntries(
         dispEntries.push({
           hop: i,
           entry: currentTabEntries.hopEntries[i],
+        });
+      } else {
+        dispEntries.push({
+          hop: i,
+          entry: {
+            peers: [],
+            rtts: {
+              current: 0,
+              min: Infinity,
+              median: 0,
+              max: -Infinity,
+              history: [],
+            },
+            stats: {
+              sent: 0,
+              replied: 0,
+              lost: 0,
+            },
+          },
         });
       }
     }
@@ -329,13 +362,6 @@ export function TracerouteResultDisplay(props: {}) {
         target: "8.8.8.8",
         ttl: 2,
         seq: 2,
-        latencyMs: 6.401,
-        peer: "100.64.0.1",
-        peerRdns: "bnG01.isp.example",
-        peerASN: "AS64513",
-        peerLocation: "London, UK",
-        peerISP: "ExampleFiber",
-        peerExactLocation: { Latitude: 51.5072, Longitude: -0.1276 },
       },
       {
         from: "agent2",
@@ -414,19 +440,6 @@ export function TracerouteResultDisplay(props: {}) {
         latencyMs: 4.771,
         peer: "10.20.0.1",
         peerRdns: "bng01.isp.example",
-        peerASN: "AS64514",
-        peerLocation: "Singapore, SG",
-        peerISP: "ExampleMobile",
-        peerExactLocation: { Latitude: 1.3521, Longitude: 103.8198 },
-      },
-      {
-        from: "agent3",
-        target: "9.9.9.9",
-        ttl: 3,
-        seq: 3,
-        latencyMs: 8.993,
-        peer: "203.0.113.77",
-        peerRdns: "core01.sin.example.net",
         peerASN: "AS64514",
         peerLocation: "Singapore, SG",
         peerISP: "ExampleMobile",
@@ -545,54 +558,76 @@ export function TracerouteResultDisplay(props: {}) {
                 <TableRow key={hop}>
                   <TableCell>{hop}</TableCell>
                   <TableCell>
-                    <Box
-                      sx={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(4, auto)",
-                        alignItems: "center",
-                        justifyItems: "flex-start",
-                        justifyContent: "start",
-                        columnGap: 2,
-                      }}
-                    >
-                      {entry.peers.map((peer, idx) => (
-                        <Fragment key={idx}>
-                          <IPDisp rdns={peer.ip.rdns} ip={peer.ip.ip} />
-                          <Box>{peer.asn}</Box>
-                          <Box>{peer.location}</Box>
-                          <Box>{peer.isp}</Box>
-                        </Fragment>
-                      ))}
-                    </Box>
-                  </TableCell>
-                  <TableCell>
-                    <Box sx={{ display: "flex", gap: 2, alignItems: "center" }}>
-                      <Box sx={{ color: getLatencyColor(entry.rtts.current) }}>
-                        {entry.rtts.current.toFixed(3)}ms
-                      </Box>
+                    {entry.peers.length > 0 ? (
                       <Box
                         sx={{
                           display: "grid",
-                          gridTemplateColumns: "repeat(3, auto)",
-                          justifyContent: "space-between",
-                          justifyItems: "center",
+                          gridTemplateColumns: "repeat(4, auto)",
                           alignItems: "center",
+                          justifyItems: "flex-start",
+                          justifyContent: "start",
                           columnGap: 2,
                         }}
                       >
-                        <Box>Min</Box>
-                        <Box>Med</Box>
-                        <Box>Max</Box>
-                        <Box sx={{ color: getLatencyColor(entry.rtts.min) }}>
-                          {entry.rtts.min.toFixed(3)}ms
-                        </Box>
-                        <Box sx={{ color: getLatencyColor(entry.rtts.median) }}>
-                          {entry.rtts.median.toFixed(3)}ms
-                        </Box>
-                        <Box sx={{ color: getLatencyColor(entry.rtts.max) }}>
-                          {entry.rtts.max.toFixed(3)}ms
-                        </Box>
+                        {entry.peers.map((peer, idx) => (
+                          <Fragment key={idx}>
+                            <IPDisp rdns={peer.ip.rdns} ip={peer.ip.ip} />
+                            <Box>{peer.asn}</Box>
+                            <Box>{peer.location}</Box>
+                            <Box>{peer.isp}</Box>
+                          </Fragment>
+                        ))}
                       </Box>
+                    ) : (
+                      <Box>{"***"}</Box>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Box sx={{ display: "flex", gap: 2, alignItems: "center" }}>
+                      {entry.rtts.history.length > 0 ? (
+                        <Fragment>
+                          <Box
+                            sx={{ color: getLatencyColor(entry.rtts.current) }}
+                          >
+                            {entry.rtts.current.toFixed(3)}ms
+                          </Box>
+                          <Box
+                            sx={{
+                              display: "grid",
+                              gridTemplateColumns: "repeat(3, auto)",
+                              justifyContent: "space-between",
+                              justifyItems: "center",
+                              alignItems: "center",
+                              columnGap: 2,
+                            }}
+                          >
+                            <Fragment>
+                              <Box>Min</Box>
+                              <Box>Med</Box>
+                              <Box>Max</Box>
+                              <Box
+                                sx={{ color: getLatencyColor(entry.rtts.min) }}
+                              >
+                                {entry.rtts.min.toFixed(3)}ms
+                              </Box>
+                              <Box
+                                sx={{
+                                  color: getLatencyColor(entry.rtts.median),
+                                }}
+                              >
+                                {entry.rtts.median.toFixed(3)}ms
+                              </Box>
+                              <Box
+                                sx={{ color: getLatencyColor(entry.rtts.max) }}
+                              >
+                                {entry.rtts.max.toFixed(3)}ms
+                              </Box>
+                            </Fragment>
+                          </Box>
+                        </Fragment>
+                      ) : (
+                        <Box>{"***"}</Box>
+                      )}
                     </Box>
                   </TableCell>
                   <TableCell>

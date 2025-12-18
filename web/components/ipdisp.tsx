@@ -15,15 +15,7 @@ export function IPDisp(props: { ip: string; rdns?: string }) {
       title={ip || rdns || ""}
       open={open}
     >
-      <Box
-        sx={{
-          "&:hover": {
-            outline: "1px solid red",
-          },
-        }}
-      >
-        {rdns ?? ip}
-      </Box>
+      <Box>{rdns || ip || "***"}</Box>
     </Tooltip>
   );
 }
