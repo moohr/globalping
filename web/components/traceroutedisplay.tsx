@@ -12,12 +12,13 @@ import {
   Tab,
   Tabs,
 } from "@mui/material";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { TaskCloseIconButton } from "@/components/taskclose";
 import { PlayPauseButton } from "./playpause";
 import { getLatencyColor } from "./colorfunc";
 import { IPDisp } from "./ipdisp";
 import { PingSample } from "@/apis/globalping";
+import { PendingTask } from "@/apis/types";
 
 type TracerouteIPEntry = {
   ip: string;
@@ -58,6 +59,31 @@ type TabState = {
   hopEntries: Record<number, HopEntryState>;
 };
 type PageState = Record<string, TabState>;
+
+type PageHistory = {
+  history: PageState[];
+  readIdx: number;
+  paused: boolean;
+};
+
+function updatePageHistory(
+  pageHistory: PageHistory,
+  pingSample: PingSample
+): PageHistory {
+  const newHistory = { ...pageHistory };
+
+  const lastPageState: PageState =
+    newHistory.history.length > 0
+      ? newHistory.history[newHistory.history.length - 1]
+      : {};
+  const nextPageState = updatePageState(lastPageState, pingSample);
+  newHistory.history = [...newHistory.history, nextPageState];
+  if (!pageHistory.paused) {
+    newHistory.readIdx++;
+  }
+
+  return newHistory;
+}
 
 function sortAndDedupPeers(
   peers: TraceroutePeerEntry[]
@@ -524,41 +550,66 @@ function streamFromSamples(samples: PingSample[]): ReadableStream<PingSample> {
   });
 }
 
-export function TracerouteResultDisplay(props: {}) {
-  const [hopEntries, setHopEntries] = useState<PageState>({});
+export function TracerouteResultDisplay(props: { task: PendingTask }) {
+  const { task } = props;
+
+  const [pageHistory, setPageHistory] = useState<PageHistory>({
+    history: [],
+    readIdx: -1,
+    paused: false,
+  });
 
   const fakeSources = ["agent1", "agent2", "agent3"];
   const [tabValue, setTabValue] = useState(fakeSources[0]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const stream = streamFromSamples(demoPingSamples);
-    const reader = stream.getReader();
+  const readerRef = useRef<ReadableStreamDefaultReader<PingSample> | null>(
+    null
+  );
 
-    (async () => {
-      try {
-        while (true) {
-          const { value, done } = await reader.read();
-          if (cancelled || done) {
-            break;
-          }
-          if (value) {
-            setHopEntries((prev) => updatePageState(prev, value));
-          }
-        }
-      } catch {
-        // ignore (likely cancellation)
+  useEffect(() => {
+    console.log("[dbg] useEffect mount");
+    if (!readerRef.current) {
+      console.log("[dbg] creating stream and getting reader");
+      const stream = streamFromSamples(demoPingSamples);
+      const reader = stream.getReader();
+      readerRef.current = reader;
+    }
+
+    const readNext = ({
+      done,
+      value,
+    }: {
+      done: boolean;
+      value: PingSample | undefined | null;
+    }) => {
+      console.log("[dbg] readNext", done, value);
+      if (done) {
+        return;
       }
-    })();
+      if (value) {
+        setPageHistory((prev) => updatePageHistory(prev, value));
+        readerRef.current?.read().then(readNext);
+      }
+    };
+    readerRef.current?.read().then(readNext);
 
     return () => {
-      cancelled = true;
-      reader.cancel().catch(() => {
-        // ignore
-      });
-      setHopEntries({});
+      console.log("[dbg] useEffect unmount");
+      if (readerRef.current) {
+        const reader = readerRef.current;
+        readerRef.current = null;
+        console.log("[dbg] canceling reader");
+        reader
+          .cancel()
+          .then(() => {
+            console.log("[dbg] reader cancelled");
+          })
+          .catch((err) => {
+            console.error("[dbg] failed to cancel reader:", err);
+          });
+      }
     };
-  }, []);
+  }, [task.taskId]);
 
   return (
     <Fragment>
@@ -610,95 +661,111 @@ export function TracerouteResultDisplay(props: {}) {
               <TableCell>Stats</TableCell>
             </TableRow>
           </TableHead>
-          <TableBody>
-            {getDispEntries(hopEntries, tabValue).map(({ hop, entry }) => {
-              return (
-                <TableRow key={hop}>
-                  <TableCell>{hop}</TableCell>
-                  <TableCell>
-                    {entry.peers.length > 0 ? (
-                      <Box
-                        sx={{
-                          display: "grid",
-                          gridTemplateColumns: "repeat(4, auto)",
-                          alignItems: "center",
-                          justifyItems: "flex-start",
-                          justifyContent: "start",
-                          columnGap: 2,
-                        }}
-                      >
-                        {entry.peers.map((peer, idx) => (
-                          <Fragment key={idx}>
-                            <IPDisp rdns={peer.ip.rdns} ip={peer.ip.ip} />
-                            <Box>{peer.asn}</Box>
-                            <Box>{peer.location}</Box>
-                            <Box>{peer.isp}</Box>
-                          </Fragment>
-                        ))}
-                      </Box>
-                    ) : (
-                      <Box>{"***"}</Box>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Box sx={{ display: "flex", gap: 2, alignItems: "center" }}>
-                      {entry.rtts.history.length > 0 ? (
-                        <Fragment>
-                          <Box
-                            sx={{ color: getLatencyColor(entry.rtts.current) }}
-                          >
-                            {entry.rtts.current.toFixed(3)}ms
-                          </Box>
+          {pageHistory.readIdx >= 0 &&
+            pageHistory.history[pageHistory.readIdx] && (
+              <TableBody>
+                {getDispEntries(
+                  pageHistory.history[pageHistory.readIdx],
+                  tabValue
+                ).map(({ hop, entry }) => {
+                  return (
+                    <TableRow key={hop}>
+                      <TableCell>{hop}</TableCell>
+                      <TableCell>
+                        {entry.peers.length > 0 ? (
                           <Box
                             sx={{
                               display: "grid",
-                              gridTemplateColumns: "repeat(3, auto)",
-                              justifyContent: "space-between",
-                              justifyItems: "center",
+                              gridTemplateColumns: "repeat(4, auto)",
                               alignItems: "center",
+                              justifyItems: "flex-start",
+                              justifyContent: "start",
                               columnGap: 2,
                             }}
                           >
+                            {entry.peers.map((peer, idx) => (
+                              <Fragment key={idx}>
+                                <IPDisp rdns={peer.ip.rdns} ip={peer.ip.ip} />
+                                <Box>{peer.asn}</Box>
+                                <Box>{peer.location}</Box>
+                                <Box>{peer.isp}</Box>
+                              </Fragment>
+                            ))}
+                          </Box>
+                        ) : (
+                          <Box>{"***"}</Box>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Box
+                          sx={{ display: "flex", gap: 2, alignItems: "center" }}
+                        >
+                          {entry.rtts.history.length > 0 ? (
                             <Fragment>
-                              <Box>Min</Box>
-                              <Box>Med</Box>
-                              <Box>Max</Box>
                               <Box
-                                sx={{ color: getLatencyColor(entry.rtts.min) }}
+                                sx={{
+                                  color: getLatencyColor(entry.rtts.current),
+                                }}
                               >
-                                {entry.rtts.min.toFixed(3)}ms
+                                {entry.rtts.current.toFixed(3)}ms
                               </Box>
                               <Box
                                 sx={{
-                                  color: getLatencyColor(entry.rtts.median),
+                                  display: "grid",
+                                  gridTemplateColumns: "repeat(3, auto)",
+                                  justifyContent: "space-between",
+                                  justifyItems: "center",
+                                  alignItems: "center",
+                                  columnGap: 2,
                                 }}
                               >
-                                {entry.rtts.median.toFixed(3)}ms
-                              </Box>
-                              <Box
-                                sx={{ color: getLatencyColor(entry.rtts.max) }}
-                              >
-                                {entry.rtts.max.toFixed(3)}ms
+                                <Fragment>
+                                  <Box>Min</Box>
+                                  <Box>Med</Box>
+                                  <Box>Max</Box>
+                                  <Box
+                                    sx={{
+                                      color: getLatencyColor(entry.rtts.min),
+                                    }}
+                                  >
+                                    {entry.rtts.min.toFixed(3)}ms
+                                  </Box>
+                                  <Box
+                                    sx={{
+                                      color: getLatencyColor(entry.rtts.median),
+                                    }}
+                                  >
+                                    {entry.rtts.median.toFixed(3)}ms
+                                  </Box>
+                                  <Box
+                                    sx={{
+                                      color: getLatencyColor(entry.rtts.max),
+                                    }}
+                                  >
+                                    {entry.rtts.max.toFixed(3)}ms
+                                  </Box>
+                                </Fragment>
                               </Box>
                             </Fragment>
-                          </Box>
-                        </Fragment>
-                      ) : (
-                        <Box>{"***"}</Box>
-                      )}
-                    </Box>
-                  </TableCell>
-                  <TableCell>
-                    <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
-                      <Box>{entry.stats.sent} Sent,</Box>
-                      <Box>{entry.stats.replied} Replied,</Box>
-                      <Box>{entry.stats.lost} Lost</Box>
-                    </Box>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
+                          ) : (
+                            <Box>{"***"}</Box>
+                          )}
+                        </Box>
+                      </TableCell>
+                      <TableCell>
+                        <Box
+                          sx={{ display: "flex", gap: 1, alignItems: "center" }}
+                        >
+                          <Box>{entry.stats.sent} Sent,</Box>
+                          <Box>{entry.stats.replied} Replied,</Box>
+                          <Box>{entry.stats.lost} Lost</Box>
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            )}
         </Table>
       </TableContainer>
     </Fragment>

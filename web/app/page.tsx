@@ -181,7 +181,7 @@ export default function Home() {
                   }}
                 />
               ) : (
-                <TracerouteResultDisplay />
+                <TracerouteResultDisplay task={task} />
               )}
             </CardContent>
           </Card>
