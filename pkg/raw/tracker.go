@@ -70,6 +70,9 @@ func (itEnt *ICMPTrackerEntry) ResolveIPInfo(ctx context.Context, ipinfoAdapter 
 }
 
 func (itEnt *ICMPTrackerEntry) ResolveRDNS(ctx context.Context, resolver *net.Resolver) (*ICMPTrackerEntry, error) {
+	if itEnt == nil {
+		return nil, nil
+	}
 	wrappedEV := new(ICMPTrackerEntry)
 	*wrappedEV = *itEnt
 	wrappedEV.Raw = make([]ICMPReceiveReply, 0)

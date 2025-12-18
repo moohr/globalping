@@ -137,10 +137,10 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 			payloadManager = NewPayloadManager(*pingRequest.RandomPayloadSize)
 		}
 
-		ttlCh := make(chan int, 1)
-		ttlCh <- pingRequest.TTL.GetNext()
+		ttlCh := make(chan int)
 
 		go func() {
+			ttlCh <- pingRequest.TTL.GetNext()
 			for ev := range tracker.RecvEvC {
 				var wrappedEV *pkgraw.ICMPTrackerEntry = &ev
 				if dst.IP != nil {
@@ -152,8 +152,6 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 						}
 					}
 				}
-				nextTTL := pingRequest.TTL.GetNext()
-				ttlCh <- nextTTL
 
 				if sp.ipinfoAdapter != nil {
 					wrappedEV, err = wrappedEV.ResolveIPInfo(ctx, sp.ipinfoAdapter)
@@ -179,6 +177,8 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 				}
 
 				outputEVChan <- PingEvent{Data: wrappedEV}
+				nextTTL := pingRequest.TTL.GetNext()
+				ttlCh <- nextTTL
 
 				if pingRequest.TotalPkts != nil {
 

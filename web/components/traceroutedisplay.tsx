@@ -328,7 +328,7 @@ export function TracerouteResultDisplay(props: {
         }}
       >
         <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
-          <Typography variant="h6">Task #{1}</Typography>
+          <Typography variant="h6">Task #{task.taskId}</Typography>
           {task.sources.length > 0 && (
             <Tabs
               value={tabValue}
