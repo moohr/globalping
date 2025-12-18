@@ -42,7 +42,10 @@ export function TaskConfirmDialog(props: {
           <Typography gutterBottom>
             Sources: {pendingTask.sources.join(", ")}
           </Typography>
-          <Typography>Targets: {pendingTask.targets.join(", ")}</Typography>
+          <Typography>
+            {pendingTask.type === "ping" ? "Targets" : "Target"}:{" "}
+            {pendingTask.targets.join(", ")}
+          </Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={onCancel}>Cancel</Button>

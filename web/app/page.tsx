@@ -7,6 +7,9 @@ import {
   CardContent,
   TextField,
   Button,
+  FormControlLabel,
+  RadioGroup,
+  Radio,
 } from "@mui/material";
 import { CSSProperties, useState } from "react";
 import { SourcesSelector } from "@/components/sourceselector";
@@ -85,13 +88,35 @@ export default function Home() {
     headerCardStyles = [...headerCardStyles, { width: "80%" }];
   }
 
+  const [taskType, setTaskType] = useState<"ping" | "traceroute">("ping");
+
   return (
     <Box sx={containerStyles}>
       <Box sx={headerCardStyles}>
         <Card>
           <CardContent>
             <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-              <Typography variant="h6">GlobalPing</Typography>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <Typography variant="h6">GlobalPing</Typography>
+                <RadioGroup
+                  value={taskType}
+                  onChange={(e) =>
+                    setTaskType(e.target.value as "ping" | "traceroute")
+                  }
+                  row
+                >
+                  <FormControlLabel
+                    value="ping"
+                    control={<Radio />}
+                    label="Ping"
+                  />
+                  <FormControlLabel
+                    value="traceroute"
+                    control={<Radio />}
+                    label="Traceroute"
+                  />
+                </RadioGroup>
+              </Box>
               <Button
                 onClick={() => {
                   const srcs = dedup(sourcesInput.split(","))
@@ -104,7 +129,7 @@ export default function Home() {
                     sources: srcs,
                     targets: tgts,
                     taskId: onGoingTasks.length.toString(),
-                    type: "ping",
+                    type: taskType,
                   });
                   setOpenTaskConfirmDialog(true);
                 }}
@@ -130,9 +155,13 @@ export default function Home() {
             <Box sx={{ marginTop: 2 }}>
               <TextField
                 variant="standard"
-                placeholder="Targets, separated by comma"
+                placeholder={
+                  taskType === "ping"
+                    ? "Targets, separated by comma"
+                    : "Specify a single target"
+                }
                 fullWidth
-                label="Targets"
+                label={taskType === "ping" ? "Targets" : "Target"}
                 value={targetsInput}
                 onChange={(e) => setTargetsInput(e.target.value)}
               />
