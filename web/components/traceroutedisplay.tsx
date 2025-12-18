@@ -132,11 +132,6 @@ function updateTabState(tabState: TabState, pingSample: PingSample): TabState {
   const newTabState = { ...tabState };
 
   if (pingSample.ttl !== undefined && pingSample.ttl !== null) {
-    if (pingSample.ttl > newTabState.maxHop) {
-      newTabState.maxHop = pingSample.ttl;
-    }
-
-    newTabState.maxHop = Math.max(newTabState.maxHop, pingSample.ttl);
     newTabState.hopEntries = {
       ...newTabState.hopEntries,
       [pingSample.ttl]: updateHopEntryState(
@@ -158,6 +153,9 @@ function updateTabState(tabState: TabState, pingSample: PingSample): TabState {
         pingSample
       ),
     };
+    if (pingSample.lastHop) {
+      newTabState.maxHop = pingSample.ttl;
+    }
   }
 
   return newTabState;

@@ -154,9 +154,13 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 					}
 				}
 
-				if dst.IP != nil && wrappedEV.IsFromLastHop(dst) {
-					if autoTTL, ok := pingRequest.TTL.(*AutoTTL); ok {
-						autoTTL.Reset()
+				if dst.IP != nil  {
+					var foundLastHop bool
+					wrappedEV, foundLastHop = wrappedEV.MarkLastHop(dst)
+					if foundLastHop {
+						if autoTTL, ok := pingRequest.TTL.(*AutoTTL); ok {
+							autoTTL.Reset()
+						}
 					}
 				}
 

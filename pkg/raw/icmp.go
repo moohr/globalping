@@ -49,6 +49,8 @@ type ICMPReceiveReply struct {
 	PeerRaw   net.Addr    `json:"-"`
 	PeerRawIP *net.IPAddr `json:"-"`
 
+	LastHop bool
+
 	PeerRDNS []string
 
 	ReceivedAt time.Time
@@ -64,6 +66,30 @@ type ICMPReceiveReply struct {
 	PeerLocation      *string
 	PeerISP           *string
 	PeerExactLocation *pkgipinfo.ExactLocation
+}
+
+func (icmpReply *ICMPReceiveReply) MarkLastHop(dst net.IPAddr) (clonedICMPReply *ICMPReceiveReply, isLastHop bool) {
+	if icmpReply == nil {
+		return nil, false
+	}
+	clonedICMPReply = new(ICMPReceiveReply)
+	*clonedICMPReply = *icmpReply
+	if icmpReply.PeerRawIP != nil && dst.IP.Equal(icmpReply.PeerRawIP.IP) {
+		clonedICMPReply.LastHop = true
+		return clonedICMPReply, true
+	}
+
+	if icmpReply.PeerRaw != nil && icmpReply.PeerRaw.String() == dst.IP.String() {
+		clonedICMPReply.LastHop = true
+		return clonedICMPReply, true
+	}
+
+	if dst.String() == icmpReply.Peer {
+		clonedICMPReply.LastHop = true
+		return clonedICMPReply, true
+	}
+	clonedICMPReply.LastHop = false
+	return clonedICMPReply, false
 }
 
 func (icmpReply *ICMPReceiveReply) ResolveIPInfo(ctx context.Context, ipinfoAdapter pkgipinfo.GeneralIPInfoAdapter) (*ICMPReceiveReply, error) {

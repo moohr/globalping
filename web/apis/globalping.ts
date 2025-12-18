@@ -64,6 +64,8 @@ export type PingSample = {
   peerISP?: string;
 
   peerExactLocation?: ExactLocation;
+
+  lastHop?: boolean;
 };
 
 export function generateFakePingSampleStream(
@@ -133,6 +135,8 @@ type RawPingEventICMPReply = {
   Size?: number;
   // TTl of the reply packet
   TTL?: number;
+
+  LastHop?: boolean;
 };
 
 type RawPingEventData = {
@@ -278,6 +282,8 @@ function pingSampleFromEvent(event: RawPingEvent): PingSample | undefined {
       raws && raws.length > 0
         ? raws[raws.length - 1].PeerExactLocation
         : undefined,
+    lastHop:
+      raws && raws.length > 0 ? raws[raws.length - 1].LastHop : undefined,
   };
 }
 

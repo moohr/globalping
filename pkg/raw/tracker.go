@@ -25,27 +25,30 @@ type ICMPTrackerEntry struct {
 	Raw          []ICMPReceiveReply
 }
 
-func (itEnt *ICMPTrackerEntry) IsFromLastHop(dst net.IPAddr) bool {
+func (itEnt *ICMPTrackerEntry) MarkLastHop(dst net.IPAddr) (clonedICMPTrackerEntry *ICMPTrackerEntry, isLastHop bool) {
 	if itEnt == nil || itEnt.Raw == nil {
-		return false
+		return nil, false
 	}
 
+	newItEnt := new(ICMPTrackerEntry)
+	*newItEnt = *itEnt
+
+	newItEnt.Raw = make([]ICMPReceiveReply, 0)
+
+	foundLastHop := false
 	for _, icmpReply := range itEnt.Raw {
 
-		if icmpReply.PeerRawIP != nil && dst.IP.Equal(icmpReply.PeerRawIP.IP) {
-			return true
+		clonedICMPReply, isThisLastHop := icmpReply.MarkLastHop(dst)
+		if isThisLastHop {
+			foundLastHop = true
 		}
 
-		if icmpReply.PeerRaw != nil && icmpReply.PeerRaw.String() == dst.IP.String() {
-			return true
-		}
-
-		if dst.String() == icmpReply.Peer {
-			return true
+		if clonedICMPReply != nil {
+			newItEnt.Raw = append(newItEnt.Raw, *clonedICMPReply)
 		}
 	}
 
-	return false
+	return newItEnt, foundLastHop
 }
 
 func (itEnt *ICMPTrackerEntry) ResolveIPInfo(ctx context.Context, ipinfoAdapter pkgipinfo.GeneralIPInfoAdapter) (*ICMPTrackerEntry, error) {
