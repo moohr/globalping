@@ -14,7 +14,7 @@ import {
 } from "@mui/material";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { TaskCloseIconButton } from "@/components/taskclose";
-import { PlayPauseButton } from "./playpause";
+import { PlayPauseButton, StopButton } from "./playpause";
 import { getLatencyColor } from "./colorfunc";
 import { IPDisp } from "./ipdisp";
 import { generatePingSampleStream, PingSample } from "@/apis/globalping";
@@ -235,6 +235,8 @@ export function TracerouteResultDisplay(props: {
 
   const [pageState, setPageState] = useState<PageState>({});
   const [paused, setPaused] = useState<boolean>(false);
+  const [stopped, setStopped] = useState<boolean>(false);
+
   const pausedRef = useRef<boolean>(false);
 
   const [tabValue, setTabValue] = useState(task.sources[0]);
@@ -242,74 +244,81 @@ export function TracerouteResultDisplay(props: {
   const readerRef = useRef<ReadableStreamDefaultReader<PingSample> | null>(
     null
   );
+  const streamRef = useRef<ReadableStream<PingSample> | null>(null);
 
   useEffect(() => {
-    console.log("[dbg] useEffect mount");
-    if (!readerRef.current) {
-      console.log("[dbg] creating stream and getting reader");
+    console.log("[dbg] useEffect mount, stopped:", stopped);
 
-      // const stream = streamFromSamples(demoPingSamples);
-      const stream = generatePingSampleStream({
-        sources: task.sources,
-        targets: task.targets.slice(0, 1),
-        intervalMs: 300,
-        pktTimeoutMs: 3000,
-        ttl: "auto",
+    let timer: number | null = null;
 
-        // when testing, use 'random', should replace this with 'ipinfo' later
-        // ipInfoProviderName: "random",
-        ipInfoProviderName: "ipinfo",
+    if (!stopped) {
+      timer = window.setTimeout(() => {
+        console.log("[dbg] creating stream");
+        const stream = generatePingSampleStream({
+          sources: task.sources,
+          targets: task.targets.slice(0, 1),
+          intervalMs: 300,
+          pktTimeoutMs: 3000,
+          ttl: "auto",
+
+          // when testing, use 'random', should replace this with 'ipinfo' later
+          // ipInfoProviderName: "random",
+          ipInfoProviderName: "ipinfo",
+        });
+        streamRef.current = stream;
+        const reader = stream.getReader();
+
+        readerRef.current = reader;
+        const readNext = ({
+          done,
+          value,
+        }: {
+          done: boolean;
+          value: PingSample | undefined | null;
+        }) => {
+          if (pausedRef.current) {
+            console.log("[dbg] paused, skipping");
+            return;
+          }
+          console.log("[dbg] readNext", done, value);
+          if (done) {
+            return;
+          }
+          if (value) {
+            setPageState((prev) => updatePageState(prev, value));
+            readerRef.current?.read().then(readNext);
+          }
+        };
+        readerRef.current?.read().then(readNext);
       });
-
-      const reader = stream.getReader();
-      readerRef.current = reader;
     }
 
     return () => {
-      console.log("[dbg] useEffect unmount");
-      if (readerRef.current) {
-        const reader = readerRef.current;
-        readerRef.current = null;
-        console.log("[dbg] canceling reader");
-        reader
-          .cancel()
-          .then(() => {
-            console.log("[dbg] reader cancelled");
-          })
-          .catch((err) => {
-            console.error("[dbg] failed to cancel reader:", err);
-          });
+      if (timer !== null) {
+        window.clearTimeout(timer);
       }
-    };
-  }, [task.taskId]);
 
-  useEffect(() => {
-    console.log("[dbg] enter useEffect [paused]", paused);
-    const readNext = ({
-      done,
-      value,
-    }: {
-      done: boolean;
-      value: PingSample | undefined | null;
-    }) => {
-      if (pausedRef.current) {
-        console.log("[dbg] paused, skipping");
-        return;
-      }
-      console.log("[dbg] readNext", done, value);
-      if (done) {
-        return;
-      }
-      if (value) {
-        setPageState((prev) => updatePageState(prev, value));
-        readerRef.current?.read().then(readNext);
-      }
+      const reader = readerRef.current;
+      readerRef.current = null;
+      reader
+        ?.cancel()
+        .then(() => {
+          console.log("[dbg] reader cancelled");
+          reader.releaseLock();
+        })
+        .catch((err) => {
+          console.error("[dbg] failed to cancel reader:", err);
+        });
+      const stream = streamRef.current;
+      stream
+        ?.cancel()
+        .then(() => {
+          console.log("[dbg] stream cancelled");
+        })
+        .catch(() => {});
+      streamRef.current = null;
     };
-    readerRef.current?.read().then(readNext);
-    return () => {
-      console.log("[dbg] exit useEffect [paused]", paused);
-    };
-  }, [paused]);
+  }, [task.taskId, stopped, paused]);
 
   return (
     <Fragment>
@@ -346,6 +355,13 @@ export function TracerouteResultDisplay(props: {
                 setPaused(false);
                 pausedRef.current = false;
               }
+            }}
+          />
+
+          <StopButton
+            stopped={stopped}
+            onToggle={(prev, nxt) => {
+              setStopped(nxt);
             }}
           />
 

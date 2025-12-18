@@ -241,6 +241,9 @@ func (it *ICMPTracker) MarkSent(seq int, ttl int) error {
 		it.store[seq] = ent
 
 		go func() {
+			if ent == nil {
+				return
+			}
 			<-ent.Timer.C
 			it.handleTimeout(seq)
 		}()
