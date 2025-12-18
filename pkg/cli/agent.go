@@ -103,7 +103,11 @@ func (agentCmd *AgentCmd) Run() error {
 	defer cancel()
 
 	ipinfoReg := pkgipinfo.NewIPInfoProviderRegistry()
-	ipinfoReg.RegisterAdapter(pkgipinfo.NewIPInfoAdapter(nil))
+	var ipinfoToken *string = nil
+	if token := os.Getenv("IPINFO_TOKEN"); token != "" {
+		ipinfoToken = &token
+	}
+	ipinfoReg.RegisterAdapter(pkgipinfo.NewIPInfoAdapter(ipinfoToken))
 	ipinfoReg.RegisterAdapter(pkgipinfo.NewDN42IPInfoAdapter())
 	ipinfoReg.RegisterAdapter(pkgipinfo.NewRandomIPInfoAdapter())
 

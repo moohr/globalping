@@ -56,25 +56,6 @@ type GeneralIPInfoAdapter interface {
 	GetName() string
 }
 
-type IPInfoAdapter struct {
-	apikey *string
-}
-
-func NewIPInfoAdapter(apikey *string) GeneralIPInfoAdapter {
-	return &IPInfoAdapter{
-		apikey: apikey,
-	}
-}
-
-func (ia *IPInfoAdapter) GetIPInfo(ctx context.Context, ip string) (*BasicIPInfo, error) {
-	// todo: implement
-	return nil, nil
-}
-
-func (ia *IPInfoAdapter) GetName() string {
-	return "ipinfo"
-}
-
 type DN42IPInfoAdapter struct{}
 
 func NewDN42IPInfoAdapter() GeneralIPInfoAdapter {
@@ -88,52 +69,4 @@ func (ia *DN42IPInfoAdapter) GetIPInfo(ctx context.Context, ip string) (*BasicIP
 
 func (ia *DN42IPInfoAdapter) GetName() string {
 	return "dn42"
-}
-
-type RandomIPInfoAdapter struct{}
-
-func NewRandomIPInfoAdapter() GeneralIPInfoAdapter {
-	return &RandomIPInfoAdapter{}
-}
-
-func (ia *RandomIPInfoAdapter) GetIPInfo(ctx context.Context, ip string) (*BasicIPInfo, error) {
-	randASNList := []string{
-		"AS65001",
-		"AS65002",
-		"AS65003",
-		"AS65004",
-		"AS65005",
-		"AS65006",
-	}
-
-	randISPList := []string{
-		"CT",
-		"CM",
-		"CU",
-	}
-
-	randLocationList := []string{
-		"CN",
-		"US",
-		"JP",
-		"KR",
-		"TW",
-		"HK",
-		"MO",
-	}
-
-	randASN := randASNList[rand.Intn(len(randASNList))]
-	randISP := randISPList[rand.Intn(len(randISPList))]
-	randLocation := randLocationList[rand.Intn(len(randLocationList))]
-
-	return &BasicIPInfo{
-		ASN:      randASN,
-		ISP:      randISP,
-		Location: randLocation,
-		Exact:    RandomLocation(),
-	}, nil
-}
-
-func (ia *RandomIPInfoAdapter) GetName() string {
-	return "random"
 }
