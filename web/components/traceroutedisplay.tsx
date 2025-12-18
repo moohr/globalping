@@ -104,14 +104,6 @@ function updateHopEntryState(
     newEntry.rtts.history = [...newEntry.rtts.history, pingSample.latencyMs];
     newEntry.rtts.median = getMedian(newEntry.rtts.history);
     newEntry.stats.replied++;
-    console.log(
-      "[dbg] replied",
-      newEntry.stats.replied,
-      "now:",
-      new Date().valueOf(),
-      "pingSample:",
-      pingSample
-    );
   } else {
     newEntry.stats.lost++;
   }
@@ -173,6 +165,8 @@ function updatePageState(
   pageState: PageState,
   pingSample: PingSample
 ): PageState {
+  console.log("[dbg] updatePageState", pingSample);
+
   // debugger;
   const newState = { ...pageState };
 
@@ -296,7 +290,7 @@ export function TracerouteResultDisplay(props: {
           }
         };
         readerRef.current?.read().then(readNext);
-      });
+      }, 100);
     }
 
     return () => {
