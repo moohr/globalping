@@ -55,18 +55,3 @@ type GeneralIPInfoAdapter interface {
 	// return the name of the ipinfo adapter, although mostly there's only one adapter for each ipinfo provider
 	GetName() string
 }
-
-type DN42IPInfoAdapter struct{}
-
-func NewDN42IPInfoAdapter() GeneralIPInfoAdapter {
-	return &DN42IPInfoAdapter{}
-}
-
-func (ia *DN42IPInfoAdapter) GetIPInfo(ctx context.Context, ip string) (*BasicIPInfo, error) {
-	// todo: implement
-	return nil, nil
-}
-
-func (ia *DN42IPInfoAdapter) GetName() string {
-	return "dn42"
-}

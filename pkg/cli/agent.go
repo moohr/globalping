@@ -44,8 +44,9 @@ type AgentCmd struct {
 	ServerCert    string `help:"The path to the server certificate" type:"path"`
 	ServerCertKey string `help:"The path to the server key" type:"path"`
 
-	TLSListenAddress string `help:"Address to listen on for TLS" default:"localhost:8081"`
-	SharedQuota      int    `help:"Shared quota for the traceroute (packets per second)" default:"10"`
+	TLSListenAddress   string `help:"Address to listen on for TLS" default:"localhost:8081"`
+	SharedQuota        int    `help:"Shared quota for the traceroute (packets per second)" default:"10"`
+	DN42IPInfoProvider string `help:"APIEndpoint of DN42 IPInfo provider" default:"https://dn42-query.netneighbor.me/ipinfo/lite/query"`
 }
 
 type PingHandler struct {
@@ -108,7 +109,7 @@ func (agentCmd *AgentCmd) Run() error {
 		ipinfoToken = &token
 	}
 	ipinfoReg.RegisterAdapter(pkgipinfo.NewIPInfoAdapter(ipinfoToken))
-	ipinfoReg.RegisterAdapter(pkgipinfo.NewDN42IPInfoAdapter())
+	ipinfoReg.RegisterAdapter(pkgipinfo.NewDN42IPInfoAdapter(agentCmd.DN42IPInfoProvider))
 	ipinfoReg.RegisterAdapter(pkgipinfo.NewRandomIPInfoAdapter())
 
 	var customCAs *x509.CertPool = nil
