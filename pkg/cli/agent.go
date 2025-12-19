@@ -108,9 +108,15 @@ func (agentCmd *AgentCmd) Run() error {
 	if token := os.Getenv("IPINFO_TOKEN"); token != "" {
 		ipinfoToken = &token
 	}
-	ipinfoReg.RegisterAdapter(pkgipinfo.NewIPInfoAdapter(ipinfoToken))
-	ipinfoReg.RegisterAdapter(pkgipinfo.NewDN42IPInfoAdapter(agentCmd.DN42IPInfoProvider))
-	ipinfoReg.RegisterAdapter(pkgipinfo.NewRandomIPInfoAdapter())
+	classicIPInfoAdapter := pkgipinfo.NewIPInfoAdapter(ipinfoToken)
+	ipinfoReg.RegisterAdapter(classicIPInfoAdapter)
+	dn42IPInfoAdapter := pkgipinfo.NewDN42IPInfoAdapter(agentCmd.DN42IPInfoProvider)
+	ipinfoReg.RegisterAdapter(dn42IPInfoAdapter)
+	randomIPInfoAdapter := pkgipinfo.NewRandomIPInfoAdapter()
+	ipinfoReg.RegisterAdapter(randomIPInfoAdapter)
+	autoIPInfoDispatcher := pkgipinfo.NewAutoIPInfoDispatcher()
+	autoIPInfoDispatcher.SetUpDefaultRoutes(dn42IPInfoAdapter, classicIPInfoAdapter)
+	ipinfoReg.RegisterAdapter(autoIPInfoDispatcher)
 
 	var customCAs *x509.CertPool = nil
 	if agentCmd.PeerCAs != nil {
