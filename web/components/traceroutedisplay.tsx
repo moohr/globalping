@@ -269,9 +269,7 @@ export function TracerouteResultDisplay(props: {
           pktTimeoutMs: 3000,
           ttl: "auto",
 
-          // when testing, use 'random', should replace this with 'ipinfo' later
-          // ipInfoProviderName: "random",
-          ipInfoProviderName: "ipinfo",
+          ipInfoProviderName: "auto",
         });
         streamRef.current = stream;
         const reader = stream.getReader();
