@@ -293,6 +293,7 @@ export type PingRequest = {
   count?: number;
   intervalMs: number; // how fast to generate icmp echo requests
   pktTimeoutMs: number; // how patient to wait for a icmp reply
+  resolver?: string;
 
   // it is a pattern string for specifying how the agent generates icmp echo request packets
   // example values:
@@ -317,6 +318,7 @@ export function generatePingSampleStream(
     pktTimeoutMs,
     ttl,
     ipInfoProviderName,
+    resolver,
   } = pingReq;
 
   const urlParams = new URLSearchParams();
@@ -327,6 +329,9 @@ export function generatePingSampleStream(
   }
   urlParams.set("intervalMs", intervalMs.toString());
   urlParams.set("pktTimeoutMs", pktTimeoutMs.toString());
+  if (resolver) {
+    urlParams.set("resolver", resolver);
+  }
 
   if (ttl !== undefined && ttl !== null && ttl !== "") {
     urlParams.set("ttl", ttl);

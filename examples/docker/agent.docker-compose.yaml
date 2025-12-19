@@ -17,8 +17,10 @@ services:
       net.ipv4.conf.default.forwarding: 1
       net.ipv6.conf.default.forwarding: 1
     working_dir: /app/globalping
+    ports:
+      - "0.0.0.0:8081:8081"
     extra_hosts:
-      - "hub.example.com:152.53.46.158"
+      - "hub.example.com=152.53.46.158"
     networks:
       - globalping
     volumes:

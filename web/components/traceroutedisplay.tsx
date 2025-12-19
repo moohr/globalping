@@ -268,7 +268,7 @@ export function TracerouteResultDisplay(props: {
           intervalMs: 300,
           pktTimeoutMs: 3000,
           ttl: "auto",
-
+          resolver: "172.20.0.53:53",
           ipInfoProviderName: "auto",
         });
         streamRef.current = stream;
