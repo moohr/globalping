@@ -50,6 +50,7 @@ export function PingResultDisplay(props: {
       targets: targets,
       intervalMs: 300,
       pktTimeoutMs: 3000,
+      resolver: "172.20.0.53:53",
     });
     const reader = resultStream.getReader();
     const readNext = (props: {

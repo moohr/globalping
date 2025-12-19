@@ -384,6 +384,12 @@ export function TracerouteResultDisplay(props: {
           />
         </Box>
       </Box>
+
+      {task.targets.length > 0 && task.targets[0] && (
+        <Box sx={{ marginTop: 1, marginBottom: 1 }}>
+          Traceroute to {task.targets[0]}
+        </Box>
+      )}
       <TableContainer sx={{ maxWidth: "100%", overflowX: "auto" }}>
         <Table>
           <TableHead>
