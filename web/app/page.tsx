@@ -10,6 +10,8 @@ import {
   FormControlLabel,
   RadioGroup,
   Radio,
+  Tooltip,
+  IconButton,
 } from "@mui/material";
 import { CSSProperties, useState } from "react";
 import { SourcesSelector } from "@/components/sourceselector";
@@ -18,6 +20,7 @@ import { PendingTask } from "@/apis/types";
 import { TaskConfirmDialog } from "@/components/taskconfirm";
 import { PingResultDisplay } from "@/components/pingdisplay";
 import { TracerouteResultDisplay } from "@/components/traceroutedisplay";
+import GitHubIcon from "@mui/icons-material/GitHub";
 
 const fakeSources = [
   "192.168.1.1",
@@ -96,6 +99,8 @@ export default function Home() {
 
   const [taskType, setTaskType] = useState<"ping" | "traceroute">("ping");
 
+  const repoAddr = process.env["NEXT_PUBLIC_GITHUB_REPO"];
+
   return (
     <Box sx={containerStyles}>
       <Box sx={headerCardStyles}>
@@ -123,26 +128,40 @@ export default function Home() {
                   />
                 </RadioGroup>
               </Box>
-              <Button
-                onClick={() => {
-                  const srcs = dedup(sourcesInput.split(","))
-                    .map((s) => s.trim())
-                    .filter((s) => s.length > 0);
-                  const tgts = dedup(targetsInput.split(","))
-                    .map((t) => t.trim())
-                    .filter((t) => t.length > 0);
+              <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+                {repoAddr !== "" && (
+                  <Tooltip title="Go to Github Page">
+                    <IconButton
+                      onClick={() => {
+                        window.open(repoAddr, "_blank");
+                      }}
+                    >
+                      <GitHubIcon />
+                    </IconButton>
+                  </Tooltip>
+                )}
 
-                  setPendingTask({
-                    sources: srcs,
-                    targets: tgts,
-                    taskId: getNextId(onGoingTasks),
-                    type: taskType,
-                  });
-                  setOpenTaskConfirmDialog(true);
-                }}
-              >
-                Add Task
-              </Button>
+                <Button
+                  onClick={() => {
+                    const srcs = dedup(sourcesInput.split(","))
+                      .map((s) => s.trim())
+                      .filter((s) => s.length > 0);
+                    const tgts = dedup(targetsInput.split(","))
+                      .map((t) => t.trim())
+                      .filter((t) => t.length > 0);
+
+                    setPendingTask({
+                      sources: srcs,
+                      targets: tgts,
+                      taskId: getNextId(onGoingTasks),
+                      type: taskType,
+                    });
+                    setOpenTaskConfirmDialog(true);
+                  }}
+                >
+                  Add Task
+                </Button>
+              </Box>
             </Box>
             <Box sx={{ marginTop: 2 }}>
               <SourcesSelector
