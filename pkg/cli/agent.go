@@ -225,10 +225,17 @@ func (agentCmd *AgentCmd) Run() error {
 		agent.CustomCertPool = customCAs
 		agent.ServerName = agentCmd.ServerName
 		go func() {
-			nodeRegAgentErrCh := agent.Run(ctx)
-			if err := <-nodeRegAgentErrCh; err != nil {
-				log.Fatalf("failed to run node registration agent: %v", err)
+			for {
+				nodeRegAgentErrCh := agent.Run(ctx)
+				if err, ok := <-nodeRegAgentErrCh; ok && err != nil {
+					log.Printf("Node registration agent exited with error: %v, restarting...", err)
+					time.Sleep(3 * time.Second)
+					continue
+				}
+				log.Println("Node registration agent exited normally")
+				return
 			}
+
 		}()
 	}
 
