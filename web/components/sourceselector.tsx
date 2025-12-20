@@ -42,6 +42,11 @@ export function SourcesSelector(props: {
           {...params}
           variant="standard"
           label="Sources"
+          placeholder={
+            value.length > 0
+              ? ""
+              : "Hint: multiple items can be selected at a time"
+          }
           slotProps={{
             input: {
               ...params.InputProps,
