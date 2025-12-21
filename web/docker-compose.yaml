@@ -1,0 +1,7 @@
+services:
+  web:
+    container_name: globalping-web
+    image: ghcr.io/internetworklab/globalping-web:latest
+    pull_policy: always
+    ports:
+      - "45843:80"
