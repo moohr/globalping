@@ -1,8 +1,6 @@
 {
-    "CN": "hub",
-    "hosts": [
-        "hub.example.com"
-    ],
+    "CN": $cname,
+    "hosts": $hosts,
     "key": {
         "algo": "rsa",
         "size": 2048

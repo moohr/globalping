@@ -3,6 +3,6 @@
 script_path=$(realpath $0)
 script_dir=$(dirname $script_path)
 
-cd $script_dir/..
+cd $script_dir
 
-docker compose -f agent.docker-compose.yaml up -d
+cfssl gencert -initca manifests/ca.json | cfssljson -bare ca
