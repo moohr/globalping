@@ -86,8 +86,8 @@ You can check that, if the hub recognizes your certs, using this command:
 ```shell
 openssl s_client \
   -CAfile confed/hub/ca.pem \  # this is the ca.pem of the hub
-  -cert $nodename.pem \        # this is the cert you just created
-  -key $nodename-key.pem \     # this is the cert key you just created
+  -cert confed/$nickname/$nodename.pem \        # this is the cert you just created
+  -key confed/$nickname/$nodename-key.pem \     # this is the cert key you just created
   -servername globalping-hub.exploro.one \       # this is the TLS server name of the hub
   -connect globalping-hub.exploro.one:8080 \     # this is the actual host:port endpoint of the hub's tls listener
   -verify_return_error   # abort on error
