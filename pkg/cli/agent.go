@@ -26,8 +26,10 @@ import (
 )
 
 type AgentCmd struct {
-	NodeName      string `help:"Nodename to advertise to the hub, leave it empty for not advertising itself to the hub"`
-	HttpEndpoint  string `help:"HTTP endpoint to advertise to the hub"`
+	NodeName     string `help:"Nodename to advertise to the hub, leave it empty for not advertising itself to the hub"`
+	HttpEndpoint string `help:"HTTP endpoint to advertise to the hub"`
+
+	// If server address is empty, it won't register itself to the hub.
 	ServerAddress string `help:"WebSocket Address of the hub" default:"wss://hub.example.com:8080/ws"`
 
 	RespondRange []string `help:"A list of CIDR ranges defining what queries this agent will respond to, by default, all queries will be responded."`
@@ -49,7 +51,11 @@ type AgentCmd struct {
 	ServerCert    string `help:"The path to the server certificate" type:"path"`
 	ServerCertKey string `help:"The path to the server key" type:"path"`
 
-	TLSListenAddress   string `help:"Address to listen on for TLS" default:"localhost:8081"`
+	TLSListenAddress string `help:"Address to listen on for TLS" default:"localhost:8081"`
+
+	// when http listen address is not empty, it will serve http requests without any TLS authentication
+	HTTPListenAddress string `help:"Address to listen on for HTTP" default:""`
+
 	SharedQuota        int    `help:"Shared quota for the traceroute (packets per second)" default:"10"`
 	DN42IPInfoProvider string `help:"APIEndpoint of DN42 IPInfo provider" default:"https://dn42-query.netneighbor.me/ipinfo/lite/query"`
 
@@ -215,6 +221,9 @@ func (agentCmd *AgentCmd) Run() error {
 	muxer := http.NewServeMux()
 	muxer.Handle("/simpleping", handler)
 
+	var muxedHandler http.Handler = muxer
+	muxedHandler = pkgmyprom.WithCounterStoreHandler(muxedHandler, counterStore)
+
 	// TLSConfig to apply when acting as a server (i.e. we provide services, peer calls us)
 	serverSideTLSCfg := &tls.Config{
 		ClientAuth: tls.RequireAndVerifyClientCert,
@@ -222,10 +231,7 @@ func (agentCmd *AgentCmd) Run() error {
 	if customCAs != nil {
 		serverSideTLSCfg.ClientCAs = customCAs
 	}
-	server := http.Server{
-		Handler:   pkgmyprom.WithCounterStoreHandler(muxer, counterStore),
-		TLSConfig: serverSideTLSCfg,
-	}
+
 	if agentCmd.ServerCert != "" && agentCmd.ServerCertKey != "" {
 		cert, err := tls.LoadX509KeyPair(agentCmd.ServerCert, agentCmd.ServerCertKey)
 		if err != nil {
@@ -268,6 +274,11 @@ func (agentCmd *AgentCmd) Run() error {
 	log.Printf("Listening on address %s", agentCmd.TLSListenAddress)
 
 	go func() {
+		server := http.Server{
+			Handler:   muxedHandler,
+			TLSConfig: serverSideTLSCfg,
+		}
+		log.Printf("Serving HTTPS requests on address %s", listener.Addr())
 		if err := server.Serve(listener); err != nil {
 			if !errors.Is(err, net.ErrClosed) {
 				log.Fatalf("failed to serve: %v", err)
@@ -281,7 +292,33 @@ func (agentCmd *AgentCmd) Run() error {
 		}()
 	}()
 
-	if agentCmd.NodeName != "" {
+	if agentCmd.HTTPListenAddress != "" {
+		listener, err := net.Listen("tcp", agentCmd.HTTPListenAddress)
+		if err != nil {
+			log.Fatalf("failed to listen on address %s: %v", agentCmd.HTTPListenAddress, err)
+		}
+		defer listener.Close()
+		log.Printf("Listening on address %s", agentCmd.HTTPListenAddress)
+		go func() {
+			log.Printf("Serving HTTP requests on address %s", listener.Addr())
+			server := &http.Server{
+				Handler: muxedHandler,
+			}
+			if err := server.Serve(listener); err != nil {
+				if !errors.Is(err, net.ErrClosed) {
+					log.Fatalf("failed to serve: %v", err)
+				}
+				log.Println("Server exitted")
+			}
+			go func() {
+				<-ctx.Done()
+				log.Println("Shutting down server")
+				server.Shutdown(ctx)
+			}()
+		}()
+	}
+
+	if agentCmd.NodeName != "" && agentCmd.ServerAddress != "" {
 		log.Printf("Will advertise self as: %s endpoint: %s hub: %s", agentCmd.NodeName, agentCmd.HttpEndpoint, agentCmd.ServerAddress)
 		attributes := make(pkgconnreg.ConnectionAttributes)
 		attributes[pkgnodereg.AttributeKeyPingCapability] = "true"
