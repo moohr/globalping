@@ -9,8 +9,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"syscall"
+	"time"
 
+	pkgutils "example.com/rbmq-demo/pkg/utils"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 )
@@ -62,6 +65,13 @@ func (botCmd *BotCmd) Run() error {
 
 	defer b.DeleteWebhook(ctx, &bot.DeleteWebhookParams{})
 
+	startedAt := time.Now()
+	ctx = context.WithValue(ctx, pkgutils.CtxKeyStartedAt, startedAt)
+
+	b.RegisterHandlerRegexp(bot.HandlerTypeMessageText, regexp.MustCompile(`^/start`), startHandler)
+	b.RegisterHandlerRegexp(bot.HandlerTypeMessageText, regexp.MustCompile(`^/ping`), pingHandler)
+	b.RegisterHandlerRegexp(bot.HandlerTypeMessageText, regexp.MustCompile(`^/uptime`), uptimeHandler)
+
 	go b.StartWebhook(ctx)
 
 	listener, err := net.Listen("tcp", botCmd.ListenAddress)
@@ -92,8 +102,67 @@ func (botCmd *BotCmd) Run() error {
 }
 
 func handler(ctx context.Context, b *bot.Bot, update *models.Update) {
-	b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: update.Message.Chat.ID,
-		Text:   update.Message.Text,
-	})
+	if update.Message != nil {
+		if update.Message.Chat.Type == models.ChatTypePrivate {
+			// private message
+			log.Printf("Received private message from private chat %+v: %s", update.Message.Chat.Username, update.Message.Text)
+			_, err := b.SendMessage(ctx, &bot.SendMessageParams{
+				ChatID: update.Message.Chat.ID,
+				Text:   update.Message.Text,
+			})
+			if err != nil {
+				log.Printf("failed to send message: %v", err)
+			}
+
+		} else if update.Message.Chat.Type == models.ChatTypeGroup || update.Message.Chat.Type == models.ChatTypeSupergroup {
+			log.Printf("Received group message from group %+v: %s", update.Message.Chat.Title, update.Message.Text)
+		}
+	}
+}
+
+func startHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	if update.Message != nil {
+		if update.Message.Chat.Type == models.ChatTypePrivate {
+			b.SendMessage(ctx, &bot.SendMessageParams{
+				ChatID: update.Message.Chat.ID,
+				Text:   "Already started!",
+			})
+		}
+	}
+}
+
+func pingHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	if update.Message != nil {
+		txt := "Pong!"
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   txt,
+			Entities: []models.MessageEntity{
+				{
+					Type:   models.MessageEntityTypePre,
+					Offset: 0,
+					Length: len(txt),
+				},
+			},
+		})
+	}
+}
+
+func uptimeHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	if update.Message != nil {
+		startedAt := ctx.Value(pkgutils.CtxKeyStartedAt).(time.Time)
+		uptime := time.Since(startedAt)
+		txt := fmt.Sprintf("Started at: %s\nUptime: %s", startedAt.Format(time.RFC3339), uptime.String())
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   txt,
+			Entities: []models.MessageEntity{
+				{
+					Type:   models.MessageEntityTypePre,
+					Offset: 0,
+					Length: len(txt),
+				},
+			},
+		})
+	}
 }
