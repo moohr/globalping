@@ -287,6 +287,11 @@ func (agentCmd *AgentCmd) Run() error {
 		attributes[pkgnodereg.AttributeKeyPingCapability] = "true"
 		attributes[pkgnodereg.AttributeKeyNodeName] = agentCmd.NodeName
 		attributes[pkgnodereg.AttributeKeyHttpEndpoint] = agentCmd.HttpEndpoint
+
+		if len(agentCmd.RespondRange) > 0 {
+			attributes[pkgnodereg.AttributeKeyRespondRange] = strings.Join(agentCmd.RespondRange, ",")
+		}
+
 		agent := pkgnodereg.NodeRegistrationAgent{
 			ServerAddress: agentCmd.ServerAddress,
 			NodeName:      agentCmd.NodeName,

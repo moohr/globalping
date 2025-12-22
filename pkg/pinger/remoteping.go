@@ -6,24 +6,27 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 )
 
 type SimpleRemotePinger struct {
-	Endpoint        string
-	Request         SimplePingRequest
-	ClientTLSConfig *tls.Config
+	Endpoint           string
+	Request            SimplePingRequest
+	ClientTLSConfig    *tls.Config
 	ExtraRequestHeader map[string]string
 }
 
 func (sp *SimpleRemotePinger) Ping(ctx context.Context) <-chan PingEvent {
+	// return mockPing(ctx)
 	evChan := make(chan PingEvent)
 	go func() {
 		defer close(evChan)
 
 		urlObj, err := url.Parse(sp.Endpoint)
 		if err != nil {
+			log.Printf("failed to parse endpoint: %v", err)
 			evChan <- PingEvent{Error: err}
 			return
 		}
@@ -33,12 +36,12 @@ func (sp *SimpleRemotePinger) Ping(ctx context.Context) <-chan PingEvent {
 		if sp.ClientTLSConfig != nil {
 			client.Transport = &http.Transport{
 				TLSClientConfig: sp.ClientTLSConfig,
-				Proxy:           http.ProxyFromEnvironment,
 			}
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "GET", urlObj.String(), nil)
 		if err != nil {
+			log.Printf("failed to create request: %v", err)
 			evChan <- PingEvent{Error: err}
 			return
 		}
@@ -51,6 +54,7 @@ func (sp *SimpleRemotePinger) Ping(ctx context.Context) <-chan PingEvent {
 
 		resp, err := client.Do(req)
 		if err != nil {
+			log.Printf("failed to send request: %v", err)
 			evChan <- PingEvent{Error: err}
 			return
 		}

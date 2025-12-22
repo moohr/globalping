@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
 	pkgnodereg "example.com/rbmq-demo/pkg/nodereg"
@@ -18,6 +19,10 @@ type PingTaskHandler struct {
 	ConnRegistry    *pkgconnreg.ConnRegistry
 	ClientTLSConfig *tls.Config
 }
+
+const (
+	defaultRemotePingerPath = "/simpleping"
+)
 
 func getRemotePingerEndpoint(connRegistry *pkgconnreg.ConnRegistry, from string) *string {
 	if connRegistry == nil {
@@ -41,6 +46,15 @@ func getRemotePingerEndpoint(connRegistry *pkgconnreg.ConnRegistry, from string)
 
 	remotePingerEndpoint, ok := regData.Attributes[pkgnodereg.AttributeKeyHttpEndpoint]
 	if ok && remotePingerEndpoint != "" {
+		urlObj, err := url.Parse(remotePingerEndpoint)
+		if err != nil {
+			log.Printf("Failed to parse remote pinger endpoint: %v", err)
+			return nil
+		}
+		if urlObj.Path == "" {
+			urlObj.Path = defaultRemotePingerPath
+		}
+		remotePingerEndpoint = urlObj.String()
 		return &remotePingerEndpoint
 	}
 
@@ -135,9 +149,9 @@ func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 			extraRequestHeader["X-Real-IP"] = pkgutils.GetRemoteAddr(r)
 
 			var remotePinger pkgpinger.Pinger = &pkgpinger.SimpleRemotePinger{
-				Endpoint:        *remotePingerEndpoint,
-				Request:         *derivedPingRequest,
-				ClientTLSConfig: handler.ClientTLSConfig,
+				Endpoint:           *remotePingerEndpoint,
+				Request:            *derivedPingRequest,
+				ClientTLSConfig:    handler.ClientTLSConfig,
 				ExtraRequestHeader: extraRequestHeader,
 			}
 			remotePinger = WithMetadata(remotePinger, map[string]string{

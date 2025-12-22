@@ -20,6 +20,7 @@ const (
 	AttributeKeyNodeName       = "NodeName"
 	AttributeKeyPingCapability = "CapabilityPing"
 	AttributeKeyHttpEndpoint   = "HttpEndpoint"
+	AttributeKeyRespondRange   = "RespondRange"
 )
 
 type NodeRegistrationAgent struct {
