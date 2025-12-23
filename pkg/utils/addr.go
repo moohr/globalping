@@ -24,3 +24,14 @@ func SelectDstIP(ctx context.Context, resolver *net.Resolver, host string, prefe
 	dst := net.IPAddr{IP: ips[0]}
 	return &dst, nil
 }
+
+func CheckIntersect(dstIPs []net.IP, rangeCIDRs []net.IPNet) bool {
+	for _, dstIP := range dstIPs {
+		for _, rangeCIDR := range rangeCIDRs {
+			if rangeCIDR.Contains(dstIP) {
+				return true
+			}
+		}
+	}
+	return false
+}

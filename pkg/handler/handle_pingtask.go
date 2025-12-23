@@ -35,17 +35,6 @@ const (
 	defaultRemotePingerPath = "/simpleping"
 )
 
-func checkIntersect(dstIPs []net.IP, rangeCIDRs []net.IPNet) bool {
-	for _, dstIP := range dstIPs {
-		for _, rangeCIDR := range rangeCIDRs {
-			if rangeCIDR.Contains(dstIP) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func getRemotePingerEndpoint(ctx context.Context, connRegistry *pkgconnreg.ConnRegistry, from string, target string, resolver *net.Resolver, outOfRangePolicy OutOfRespondRangePolicy) *string {
 	if connRegistry == nil {
 		k := from
@@ -88,7 +77,7 @@ func getRemotePingerEndpoint(ctx context.Context, connRegistry *pkgconnreg.ConnR
 			log.Printf("Failed to lookup IP for target %s: %v", target, err)
 			dsts = make([]net.IP, 0)
 		}
-		if !checkIntersect(dsts, rangeCIDRs) {
+		if !pkgutils.CheckIntersect(dsts, rangeCIDRs) {
 			log.Printf("Target %s is not in the respond range of node %s, which is %s", target, from, strings.Join(respondRange, ", "))
 			log.Printf("Out of range target %s will not be assigned to a remote pinger because of the policy", target)
 			return nil
