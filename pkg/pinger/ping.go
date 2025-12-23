@@ -137,6 +137,7 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 		go func() {
 			log.Printf("ICMP Event-generating goroutine for %s is started", dst.String())
 			defer waitForICMPEVGenGoroutine.Done()
+			defer close(ttlCh)
 			defer log.Printf("ICMP Event-generating goroutine for %s is exitting", dst.String())
 
 			for {
@@ -181,7 +182,8 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 
 					outputEVChan <- PingEvent{Data: wrappedEV}
 
-					if pingRequest.TotalPkts != nil && ev.Seq >= *pingRequest.TotalPkts {
+					if pingRequest.TotalPkts != nil && tracker.GetUnAcked() == 0 && tracker.GetAckedSeq() == *pingRequest.TotalPkts {
+						// the SEQ of reply packet is un-reliable, since the order of reply packets is not guaranteed.
 						log.Printf("Max number of packets to send: %d, received ev of seq %d, no more icmp events will be generated", *pingRequest.TotalPkts, ev.Seq)
 						return
 					}
@@ -225,8 +227,11 @@ func (sp *SimplePinger) Ping(ctx context.Context) <-chan PingEvent {
 				case <-ctx.Done():
 					log.Printf("In ICMPSending goroutine for %s, got context done", dst.String())
 					return
-				default:
-					ttl := <-ttlCh
+				case ttl, ok := <-ttlCh:
+					if !ok {
+						log.Printf("In ICMPSending goroutine for %s, no more TTL values will be generated", dst.String())
+						return
+					}
 
 					req := pkgraw.ICMPSendRequest{
 						Seq: numPktsSent + 1,

@@ -125,6 +125,7 @@ type ICMPTracker struct {
 	store       map[int]*ICMPTrackerEntry
 	serviceChan chan chan ServiceRequest
 	pktTimeout  time.Duration
+	ackedSeq    int
 
 	// Receiving Events
 	// A empty array of ReceivedAt means timeout
@@ -207,6 +208,7 @@ func (it *ICMPTracker) handleTimeout(seq int) {
 			if len(ent.ReceivedAt) > 0 {
 				return nil
 			}
+			it.ackedSeq++
 			if clone := ent.ReadonlyClone(); clone != nil {
 				go func(ent ICMPTrackerEntry) {
 					it.RecvEvC <- ent
@@ -263,6 +265,34 @@ func (it *ICMPTracker) GetUnAcked() int {
 	return *unAcked
 }
 
+func (it *ICMPTracker) GetAckedSeq() int {
+	requestCh, ok := <-it.serviceChan
+	if !ok {
+		// engine is already shutdown
+		return 0
+	}
+	defer close(requestCh)
+
+	ackedSeqCount := new(int)
+
+	fn := func(ctx context.Context) error {
+		*ackedSeqCount = it.ackedSeq
+		return nil
+	}
+
+	resultCh := make(chan error)
+	requestCh <- ServiceRequest{
+		Func:   fn,
+		Result: resultCh,
+	}
+
+	err := <-resultCh
+	if err != nil {
+		log.Printf("failed to get un-acked packets: %v", err)
+	}
+	return *ackedSeqCount
+}
+
 func (it *ICMPTracker) MarkSent(seq int, ttl int) error {
 	requestCh, ok := <-it.serviceChan
 	if !ok {
@@ -317,6 +347,9 @@ func (it *ICMPTracker) MarkReceived(seq int, raw ICMPReceiveReply) error {
 			if ent.Timer != nil {
 				ent.Timer.Stop()
 				ent.Timer = nil
+			}
+			if len(ent.Raw) == 0 {
+				it.ackedSeq++
 			}
 			ent.Raw = append(ent.Raw, raw)
 			ent.ReceivedAt = append(ent.ReceivedAt, time.Now())
