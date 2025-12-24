@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect } from "react";
+import { CSSProperties, Fragment, useEffect, useMemo } from "react";
 import worldMapAny from "./worldmap.json";
 import { Box } from "@mui/material";
 
@@ -85,15 +85,90 @@ function toFlatShape(features: Feature[]): FlatShape[] {
   return flatShapes;
 }
 
-export function WorldMap() {
-  useEffect(() => {
+type Projector = (point: LonLat) => [number, number];
+
+function getProjector(canvasX: number, canvasY: number): Projector {
+  return (point: LonLat) => {
+    const [longitude, latitude] = point;
+    const x = (longitude - -180) * (canvasX / 360);
+    const y = (180 + (latitude - -90) * -1) * (canvasY / 180);
+    return [x, y];
+  };
+}
+
+function RenderPolygon(props: {
+  polygon: Polygon;
+  projector: Projector;
+  fill: CSSProperties["fill"];
+}) {
+  const { polygon, projector, fill } = props;
+  return (
+    <Fragment>
+      <polygon
+        points={[...polygon, polygon[0]]
+          .map((point) => projector(point).join(","))
+          .join(" ")}
+        fill={fill}
+        stroke="none"
+      />
+    </Fragment>
+  );
+}
+
+function RenderPolygons(props: {
+  shapes: FlatShape[];
+  projector: Projector;
+  fill: CSSProperties["fill"];
+}) {
+  const { shapes, projector, fill } = props;
+  return (
+    <Fragment>
+      {shapes.map((shape, i) => (
+        <RenderPolygon
+          key={i}
+          polygon={shape.polygon}
+          projector={projector}
+          fill={fill}
+        />
+      ))}
+    </Fragment>
+  );
+}
+
+export function WorldMap(props: {
+  canvasX: number;
+  canvasY: number;
+  fill: CSSProperties["fill"];
+}) {
+  const { canvasX, canvasY, fill } = props;
+  const flatShapes = useMemo(() => {
     const worldMap = worldMapAny as FeatureCollection;
     const flatShapes = toFlatShape(worldMap.features);
     console.log("[dbg] flatShapes", flatShapes);
-  }, []);
+    return flatShapes;
+  }, [worldMapAny]);
+
+  const projector = useMemo(
+    () => getProjector(canvasX, canvasY),
+    [canvasX, canvasY]
+  );
+
   return (
     <Fragment>
-      <Box sx={{ height: "100%" }}>Test Content</Box>
+      <Box sx={{ height: "100%" }}>
+        <svg
+          viewBox={`0 0 ${canvasX} ${canvasY}`}
+          width="100%"
+          height="100%"
+          style={{ overflow: "hidden" }}
+        >
+          <RenderPolygons
+            shapes={flatShapes}
+            projector={projector}
+            fill={fill}
+          />
+        </svg>
+      </Box>
     </Fragment>
   );
 }

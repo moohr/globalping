@@ -13,7 +13,7 @@ import {
   Tooltip,
   IconButton,
 } from "@mui/material";
-import { CSSProperties, useState } from "react";
+import { CSSProperties, Fragment, useState } from "react";
 import { SourcesSelector } from "@/components/sourceselector";
 import { getCurrentPingers } from "@/apis/globalping";
 import { PendingTask } from "@/apis/types";
@@ -202,29 +202,31 @@ export default function Home() {
           </CardContent>
         </Card>
         {getSortedOnGoingTasks(onGoingTasks).map((task) => (
-          <Card key={task.taskId}>
-            <CardContent>
-              {task.type === "ping" ? (
-                <PingResultDisplay
-                  pendingTask={task}
-                  onDeleted={() => {
-                    setOnGoingTasks(
-                      onGoingTasks.filter((t) => t.taskId !== task.taskId)
-                    );
-                  }}
-                />
-              ) : (
-                <TracerouteResultDisplay
-                  task={task}
-                  onDeleted={() => {
-                    setOnGoingTasks(
-                      onGoingTasks.filter((t) => t.taskId !== task.taskId)
-                    );
-                  }}
-                />
-              )}
-            </CardContent>
-          </Card>
+          <Fragment key={task.taskId}>
+            {task.type === "ping" ? (
+              <PingResultDisplay
+                pendingTask={task}
+                onDeleted={() => {
+                  setOnGoingTasks(
+                    onGoingTasks.filter((t) => t.taskId !== task.taskId)
+                  );
+                }}
+              />
+            ) : (
+              <Card>
+                <CardContent>
+                  <TracerouteResultDisplay
+                    task={task}
+                    onDeleted={() => {
+                      setOnGoingTasks(
+                        onGoingTasks.filter((t) => t.taskId !== task.taskId)
+                      );
+                    }}
+                  />
+                </CardContent>
+              </Card>
+            )}
+          </Fragment>
         ))}
       </Box>
       <TaskConfirmDialog

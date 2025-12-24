@@ -12,6 +12,7 @@ import {
   Button,
   IconButton,
   Tooltip,
+  Card,
 } from "@mui/material";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { PingSample, generatePingSampleStream } from "@/apis/globalping";
@@ -118,12 +119,14 @@ export function PingResultDisplay(props: {
   }));
 
   return (
-    <Fragment>
+    <Card>
       <Box
         sx={{
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
+          overflow: "hidden",
+          padding: 2,
         }}
       >
         <Typography variant="h6">Task #{pendingTask.taskId}</Typography>
@@ -172,7 +175,7 @@ export function PingResultDisplay(props: {
           </TableBody>
         </Table>
       </TableContainer>
-    </Fragment>
+    </Card>
   );
 }
 
@@ -190,6 +193,9 @@ function RowMap(props: {
   ): number | undefined | null => {
     return latencyMap[target]?.[source];
   };
+
+  const canvasX = 360000;
+  const canvasY = 200000;
 
   return (
     <Fragment>
@@ -233,11 +239,11 @@ function RowMap(props: {
               sx={{
                 display: "flex",
                 alignItems: "center",
-                height: "300px",
+                height: "500px",
                 flexDirection: "row",
               }}
             >
-              <WorldMap />
+              <WorldMap canvasX={canvasX} canvasY={canvasY} fill="lightblue" />
             </Box>
           </TableCell>
         </TableRow>
