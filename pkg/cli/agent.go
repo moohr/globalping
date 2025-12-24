@@ -30,7 +30,7 @@ import (
 type AgentCmd struct {
 	NodeName            string `help:"Nodename to advertise to the hub, leave it empty for not advertising itself to the hub"`
 	HttpEndpoint        string `help:"HTTP endpoint to advertise to the hub"`
-	ExactLocationLonLat string `help:"The exact geographic location to advertise to the hub, when present. Format: <longitude>,<latitude>"`
+	ExactLocationLonLat string `help:"The exact geographic location to advertise to the hub, when present. Format: <latitude>,<longitude>"`
 
 	// If server address is empty, it won't register itself to the hub.
 	ServerAddress string `help:"WebSocket Address of the hub" default:"wss://hub.example.com:8080/ws"`
